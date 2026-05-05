@@ -15,7 +15,9 @@ import {
   UserPlus,
   Users,
   ChartBar,
-  X
+  X,
+  CheckCircle,
+  XCircle
 } from "@phosphor-icons/react";
 import "./styles.css";
 
@@ -81,6 +83,7 @@ function App() {
       {view === "profile" && <ProfileView token={token} user={user} />}
       {view === "admin" && user.role === "admin" && <AdminView token={token} />}
       {view === "data" && user.role === "admin" && <DataView token={token} />}
+      {view === "checkin" && <DailyCheckInView token={token} user={user} />}
     </Shell>
   );
 }
@@ -232,6 +235,7 @@ function Shell({ children, user, view, setView, mobileOpen, setMobileOpen, onLog
   const items = [
     { id: "dashboard", label: "Dashboard", icon: House },
     { id: "shows", label: "Shows", icon: CalendarBlank },
+    { id: "checkin", label: "Daily Check-in", icon: CheckCircle },
     { id: "profile", label: "Profile", icon: UserCircle },
     ...(user.role === "admin" ? [
       { id: "admin", label: "Admin", icon: GearSix },
@@ -570,6 +574,147 @@ function DataView({ token }) {
           </table>
         </div>
       </section>
+    </div>
+  );
+}
+
+function DailyCheckInView({ token, user }) {
+  const [status, setStatus] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const data = await api("/activity/today", { token });
+      setStatus(data.status);
+      setSummary(data.summary);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const updateStatus = async (nextStatus) => {
+    setSubmitting(true);
+    try {
+      await api("/activity", {
+        token,
+        method: "POST",
+        body: { status: nextStatus }
+      });
+      setStatus(nextStatus);
+      fetchData();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) return <DashboardSkeleton />;
+
+  return (
+    <div className="space-y-7">
+      <section className="panel max-w-2xl">
+        <div className="mb-8">
+          <h2 className="text-2xl font-semibold tracking-tight">Today's Check-in</h2>
+          <p className="mt-2 text-slate-400">
+            Let the team know if you're active and available for shows today.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <button
+            onClick={() => updateStatus("active")}
+            disabled={submitting}
+            className={`group relative flex flex-col items-center rounded-2xl border-2 p-6 text-center transition-all ${
+              status === "active"
+                ? "border-emerald-500/50 bg-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.1)]"
+                : "border-white/5 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.04]"
+            }`}
+          >
+            <div
+              className={`mb-4 grid size-14 place-items-center rounded-xl transition-colors ${
+                status === "active" ? "bg-emerald-500 text-white" : "bg-white/5 text-slate-400"
+              }`}
+            >
+              <CheckCircle size={32} weight={status === "active" ? "fill" : "regular"} />
+            </div>
+            <p className={`text-lg font-semibold ${status === "active" ? "text-white" : "text-slate-300"}`}>
+              Active Today
+            </p>
+            <p className="mt-1 text-sm text-slate-500">I am available and working</p>
+            {status === "active" && (
+              <div className="absolute right-3 top-3 text-emerald-500">
+                <Check size={20} weight="bold" />
+              </div>
+            )}
+          </button>
+
+          <button
+            onClick={() => updateStatus("inactive")}
+            disabled={submitting}
+            className={`group relative flex flex-col items-center rounded-2xl border-2 p-6 text-center transition-all ${
+              status === "inactive"
+                ? "border-rose-500/50 bg-rose-500/10 shadow-[0_0_20px_rgba(244,63,94,0.1)]"
+                : "border-white/5 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.04]"
+            }`}
+          >
+            <div
+              className={`mb-4 grid size-14 place-items-center rounded-xl transition-colors ${
+                status === "inactive" ? "bg-rose-500 text-white" : "bg-white/5 text-slate-400"
+              }`}
+            >
+              <XCircle size={32} weight={status === "inactive" ? "fill" : "regular"} />
+            </div>
+            <p className={`text-lg font-semibold ${status === "inactive" ? "text-white" : "text-slate-300"}`}>
+              Not Active
+            </p>
+            <p className="mt-1 text-sm text-slate-500">I am off or unavailable</p>
+            {status === "inactive" && (
+              <div className="absolute right-3 top-3 text-rose-500">
+                <Check size={20} weight="bold" />
+              </div>
+            )}
+          </button>
+        </div>
+      </section>
+
+      {summary && (
+        <section className="panel">
+          <div className="mb-6">
+            <h2 className="section-title">Team availability today</h2>
+            <p className="section-copy">Who has checked in so far.</p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {summary.length === 0 ? (
+              <p className="col-span-full py-10 text-center text-sm text-slate-500">
+                No one has checked in yet today.
+              </p>
+            ) : (
+              summary.map((entry) => (
+                <div key={entry.user.id} className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                  <div className={`grid size-10 place-items-center rounded-lg ${
+                    entry.status === 'active' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                  }`}>
+                    {entry.status === 'active' ? <CheckCircle size={24} weight="fill" /> : <XCircle size={24} weight="fill" />}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-white">{entry.user.name}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">{entry.user.role}</p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

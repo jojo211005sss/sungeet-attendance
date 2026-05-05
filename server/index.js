@@ -118,6 +118,8 @@ let attendance = [
   }
 ];
 
+let dailyActivity = [];
+
 const publicUser = (user) => ({
   id: user.id,
   name: user.name,
@@ -498,6 +500,52 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin"), async
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   );
   return res.send(Buffer.from(buffer));
+});
+
+app.get("/api/activity/today", authenticate, (req, res) => {
+  const todayStr = new Date().toISOString().split("T")[0];
+  const userStatus = dailyActivity.find(
+    (a) => a.user_id === req.user.id && a.date === todayStr
+  );
+
+  let summary = null;
+  if (req.user.role !== "employee") {
+    summary = dailyActivity
+      .filter((a) => a.date === todayStr)
+      .map((a) => ({
+        ...a,
+        user: publicUser(byId(a.user_id))
+      }));
+  }
+
+  res.json({ status: userStatus?.status || null, summary });
+});
+
+app.post("/api/activity", authenticate, (req, res) => {
+  const { status } = req.body;
+  if (!["active", "inactive"].includes(status)) {
+    return res.status(400).json({ message: "Status must be active or inactive" });
+  }
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  const existingIndex = dailyActivity.findIndex(
+    (a) => a.user_id === req.user.id && a.date === todayStr
+  );
+
+  const entry = {
+    user_id: req.user.id,
+    date: todayStr,
+    status,
+    updated_at: new Date().toISOString()
+  };
+
+  if (existingIndex > -1) {
+    dailyActivity[existingIndex] = entry;
+  } else {
+    dailyActivity.push(entry);
+  }
+
+  res.json({ message: "Status updated", status });
 });
 
 function toWorkbookSheet(sheet, rows, widths) {
