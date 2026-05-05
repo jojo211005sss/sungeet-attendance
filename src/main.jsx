@@ -19,7 +19,7 @@ import {
 } from "@phosphor-icons/react";
 import "./styles.css";
 
-const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:4000/api`;
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "/api" : `http://${window.location.hostname}:4000/api`);
 
 const demoAccounts = {
   employee: { email: "aarav@sunggeet.com", password: "password123" },
