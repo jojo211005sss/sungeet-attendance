@@ -248,11 +248,11 @@ const formatTimestamp = (value) =>
     timeZone: "Asia/Kolkata"
   }).format(new Date(value));
 
-app.get("/api/health", (_req, res) => {
+app.get("/health", (_req, res) => {
   res.json({ ok: true, now: today.toISOString() });
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/auth/login", async (req, res) => {
   const { email, password, role } = req.body;
   const user = users.find((candidate) => candidate.email === email);
 
@@ -267,15 +267,15 @@ app.post("/api/auth/login", async (req, res) => {
   return res.json({ token: signToken(user), user: publicUser(user) });
 });
 
-app.get("/api/auth/me", authenticate, (req, res) => {
+app.get("/auth/me", authenticate, (req, res) => {
   res.json({ user: publicUser(req.user), stats: getStats(req.user) });
 });
 
-app.get("/api/users", authenticate, requireRole("admin"), (_req, res) => {
+app.get("/users", authenticate, requireRole("admin"), (_req, res) => {
   res.json({ users: users.map(publicUser) });
 });
 
-app.post("/api/users", authenticate, requireRole("admin"), (req, res) => {
+app.post("/users", authenticate, requireRole("admin"), (req, res) => {
   const name = String(req.body.name || "").trim();
   const email = normalizeEmail(req.body.email);
   const password = String(req.body.password || "").trim();
@@ -302,12 +302,12 @@ app.post("/api/users", authenticate, requireRole("admin"), (req, res) => {
   return res.status(201).json({ user: publicUser(user), users: users.map(publicUser) });
 });
 
-app.get("/api/shows", authenticate, (req, res) => {
+app.get("/shows", authenticate, (req, res) => {
   const visibleShows = shows.filter((show) => canAccessShow(req.user, show)).map(decorateShow);
   res.json({ shows: visibleShows });
 });
 
-app.post("/api/shows", authenticate, requireRole("admin"), (req, res) => {
+app.post("/shows", authenticate, requireRole("admin"), (req, res) => {
   const date = String(req.body.date || "").trim();
   const time = String(req.body.time || "").trim();
   const location = String(req.body.location || "").trim();
@@ -341,7 +341,7 @@ app.post("/api/shows", authenticate, requireRole("admin"), (req, res) => {
   return res.status(201).json({ show: decorateShow(show), shows: shows.map(decorateShow) });
 });
 
-app.get("/api/shows/:id", authenticate, (req, res) => {
+app.get("/shows/:id", authenticate, (req, res) => {
   const show = shows.find((candidate) => candidate.id === req.params.id);
 
   if (!show) {
@@ -355,7 +355,7 @@ app.get("/api/shows/:id", authenticate, (req, res) => {
   return res.json({ show: decorateShow(show) });
 });
 
-app.post("/api/attendance", authenticate, requireRole("employee"), (req, res) => {
+app.post("/attendance", authenticate, requireRole("employee"), (req, res) => {
   const { show_id } = req.body;
   const show = shows.find((candidate) => candidate.id === show_id);
 
@@ -387,7 +387,7 @@ app.post("/api/attendance", authenticate, requireRole("employee"), (req, res) =>
   return res.status(201).json({ attendance: entry, show: decorateShow(show) });
 });
 
-app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "admin"), (req, res) => {
+app.patch("/attendance/:id/review", authenticate, requireRole("manager", "admin"), (req, res) => {
   const { approval_status } = req.body;
   const entry = attendance.find((candidate) => candidate.id === Number(req.params.id));
 
@@ -416,7 +416,7 @@ app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "ad
   return res.json({ attendance: entry, show: decorateShow(show) });
 });
 
-app.get("/api/profile", authenticate, (req, res) => {
+app.get("/profile", authenticate, (req, res) => {
   const userAttendance = attendance
     .filter((entry) => (req.user.role === "employee" ? entry.user_id === req.user.id : true))
     .filter((entry) => {
@@ -432,7 +432,7 @@ app.get("/api/profile", authenticate, (req, res) => {
   res.json({ stats: getStats(req.user), activity: userAttendance });
 });
 
-app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin"), async (_req, res) => {
+app.get("/export/attendance.xlsx", authenticate, requireRole("admin"), async (_req, res) => {
   const rows = attendanceLedgerRows();
   const summaryByEmployee = users
     .filter((user) => user.role === "employee")
@@ -502,7 +502,7 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin"), async
   return res.send(Buffer.from(buffer));
 });
 
-app.get("/api/activity/today", authenticate, (req, res) => {
+app.get("/activity/today", authenticate, (req, res) => {
   const todayStr = new Date().toISOString().split("T")[0];
   const userStatus = dailyActivity.find(
     (a) => a.user_id === req.user.id && a.date === todayStr
@@ -521,7 +521,7 @@ app.get("/api/activity/today", authenticate, (req, res) => {
   res.json({ status: userStatus?.status || null, summary });
 });
 
-app.post("/api/activity", authenticate, (req, res) => {
+app.post("/activity", authenticate, (req, res) => {
   const { status } = req.body;
   if (!["active", "inactive"].includes(status)) {
     return res.status(400).json({ message: "Status must be active or inactive" });
