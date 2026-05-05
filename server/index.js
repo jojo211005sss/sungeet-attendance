@@ -562,6 +562,10 @@ function textColorForCell(column, value) {
   return "#0f172a";
 }
 
-app.listen(PORT, () => {
-  console.log(`SUNGGEET API listening on http://localhost:${PORT}`);
-});
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(`SUNGGEET API listening on http://localhost:${PORT}`);
+  });
+}
+
+export default app;
