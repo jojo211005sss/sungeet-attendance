@@ -167,6 +167,10 @@ const formatTimestamp = (value) =>
     timeZone: "Asia/Kolkata"
   }).format(new Date(value));
 
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, now: new Date().toISOString(), db: "connected" });
+});
+
 app.post("/api/auth/login", async (req, res) => {
   const { email, password, role } = req.body;
   const normalizedEmail = normalizeEmail(email);
