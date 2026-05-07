@@ -213,14 +213,14 @@ app.post("/api/users", authenticate, requireRole("admin"), async (req, res) => {
     return res.status(409).json({ message: "A member with this email already exists" });
   }
 
-  const hashedPassword = bcrypt.hashSync(password, 10);
-  await sql`
+  const [newUser] = await sql`
     INSERT INTO users (name, email, password, role)
     VALUES (${name}, ${email}, ${hashedPassword}, ${role})
+    RETURNING *
   `;
 
   const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
-  return res.status(201).json({ users: allUsers.map(publicUser) });
+  return res.status(201).json({ user: publicUser(newUser), users: allUsers.map(publicUser) });
 });
 
 app.get("/api/shows", authenticate, async (req, res) => {
