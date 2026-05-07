@@ -24,9 +24,9 @@ import "./styles.css";
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "/api" : `http://${window.location.hostname}:4000/api`);
 
 const demoAccounts = {
-  employee: { email: "aarav@sunggeet.com", password: "password123" },
-  manager: { email: "kabir@sunggeet.com", password: "password123" },
-  admin: { email: "admin@sunggeet.com", password: "password123" }
+  employee: { username: "aarav@sunggeet.com", password: "password123" },
+  manager: { username: "kabir@sunggeet.com", password: "password123" },
+  admin: { username: "admin@sunggeet.com", password: "password123" }
 };
 
 function App() {
@@ -192,12 +192,15 @@ function LoginScreen({ onLogin }) {
             ))}
           </div>
 
-          <label className="mt-6 block">
-            <span className="mb-2 block text-sm text-slate-300">Email</span>
+          <div className="space-y-4 rounded-xl border border-white/10 bg-white/5 p-6 backdrop-blur-md">
+          <label className="block">
+            <span className="mb-2 block text-sm text-slate-300">Username</span>
             <input
-              className="field"
-              value={form.email}
-              onChange={(event) => setForm({ ...form, email: event.target.value })}
+              type="text"
+              className="w-full rounded-lg border border-white/10 bg-black/20 p-3 text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              placeholder="Enter your username"
+              value={form.username}
+              onChange={(event) => setForm({ ...form, username: event.target.value })}
             />
           </label>
 
@@ -210,6 +213,7 @@ function LoginScreen({ onLogin }) {
               onChange={(event) => setForm({ ...form, password: event.target.value })}
             />
           </label>
+          </div>
 
           {error && <p className="mt-4 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p>}
 
@@ -432,8 +436,8 @@ function AdminView({ token }) {
           {users.map((user) => (
             <div className="admin-row" key={user.id}>
               <div>
-                <p className="font-medium text-white">{user.name}</p>
-                <p className="text-sm text-slate-400">{user.email}</p>
+                <h1 className="text-2xl font-bold">{user.name}</h1>
+                <p className="text-sm text-slate-400">{user.username}</p>
               </div>
               <StatusBadge status={user.role} />
             </div>
@@ -488,9 +492,6 @@ function DataView({ token }) {
     return employees.map((employee) => {
       const monthlyShows = shows.filter((s) => s.date.startsWith(selectedMonth));
       const attendedCount = monthlyShows.reduce((count, show) => {
-        // Attendance counts as attended if it's "approved" (as per user's usual requirement for "attended")
-        // or just "marked"? Usually "attended" means they were there and approved.
-        // The user said "number of shows they attended". I'll count "approved" attendance.
         const entry = show.attendance.find((a) => a.user_id === employee.id);
         const hasAttended = entry && entry.approval_status === "approved";
         return count + (hasAttended ? 1 : 0);
@@ -499,7 +500,7 @@ function DataView({ token }) {
       return {
         id: employee.id,
         name: employee.name,
-        email: employee.email,
+        username: employee.username,
         attended: attendedCount
       };
     });
@@ -559,8 +560,8 @@ function DataView({ token }) {
                 stats.map((row) => (
                   <tr key={row.id}>
                     <td className="py-4 pr-4">
-                      <p className="font-medium text-white">{row.name}</p>
-                      <p className="text-xs text-slate-400">{row.email}</p>
+                      <p className="font-medium text-slate-200">{row.name}</p>
+                      <p className="text-xs text-slate-400">{row.username}</p>
                     </td>
                     <td className="py-4 pr-4 text-right">
                       <span className="text-xl font-mono font-semibold text-indigo-100">
@@ -719,10 +720,10 @@ function DailyCheckInView({ token, user }) {
   );
 }
 
-function MemberForm({ token, onCreated }) {
+function MemberForm({ token, onSuccess }) {
   const [form, setForm] = useState({
     name: "",
-    email: "",
+    username: "",
     password: "password123",
     role: "employee"
   });
@@ -743,8 +744,8 @@ function MemberForm({ token, onCreated }) {
         body: form
       });
       setMessage(`${data.user.name} added as ${data.user.role}`);
-      setForm({ name: "", email: "", password: "password123", role: "employee" });
-      onCreated();
+      setForm({ name: "", username: "", password: "password123", role: "employee" });
+      if (onSuccess) onSuccess();
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -763,11 +764,10 @@ function MemberForm({ token, onCreated }) {
           placeholder="Ishaan Arora"
         />
         <TextField
-          label="Email"
-          type="email"
-          value={form.email}
-          onChange={(value) => setForm({ ...form, email: value })}
-          placeholder="ishaan@sunggeet.com"
+          label="Username"
+          type="text"
+          value={form.username}
+          onChange={(value) => setForm({ ...form, username: value })}
         />
         <TextField
           label="Temporary password"
@@ -904,10 +904,15 @@ function ShowForm({ token, managers, employees, onCreated }) {
                 checked={form.employee_ids.includes(employee.id)}
                 onChange={() => toggleEmployee(employee.id)}
               />
-              <span>
-                <span className="block text-sm font-medium text-white">{employee.name}</span>
-                <span className="block text-xs text-slate-500">{employee.email}</span>
-              </span>
+              <div className="flex items-center gap-3 truncate">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-slate-300">
+                  {employee.name.charAt(0)}
+                </div>
+                <div className="truncate">
+                  <span className="block truncate font-medium text-slate-200">{employee.name}</span>
+                  <span className="block text-xs text-slate-500">{employee.username}</span>
+                </div>
+              </div>
             </label>
           ))}
         </div>
@@ -1138,7 +1143,7 @@ function ApprovalPanel({ show, token, onChanged }) {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate font-medium text-white">{row.employee.name}</p>
-                <p className="mt-1 text-sm text-slate-400">{row.employee.email}</p>
+                <p className="mt-1 text-sm text-slate-400">{row.employee.username}</p>
               </div>
               <StatusBadge status={row.attendance?.approval_status || "waiting"} />
             </div>

@@ -16,7 +16,7 @@ async function init() {
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
+        username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         role TEXT NOT NULL CHECK (role IN ('employee', 'manager', 'admin'))
       )
@@ -63,22 +63,23 @@ async function init() {
     console.log("✅ Tables created successfully.");
 
     // 6. Seed Users
-    const users = [
-      { id: 1, name: "Aarav Mehta", email: "aarav@sunggeet.com", password: "password123", role: "employee" },
-      { id: 2, name: "Naina Kapoor", email: "naina@sunggeet.com", password: "password123", role: "employee" },
-      { id: 3, name: "Rhea Fernandes", email: "rhea@sunggeet.com", password: "password123", role: "employee" },
-      { id: 4, name: "Kabir Sethi", email: "kabir@sunggeet.com", password: "password123", role: "manager" },
-      { id: 5, name: "Mira Rao", email: "mira@sunggeet.com", password: "password123", role: "manager" },
-      { id: 6, name: "SUNGGEET Admin", email: "admin@sunggeet.com", password: "password123", role: "admin" }
+    const hashedPassword = bcrypt.hashSync("password123", 10);
+    const dummyUsers = [
+      { id: 1, name: "Aarav Mehta", username: "aarav@sunggeet.com", password: hashedPassword, role: "employee" },
+      { id: 2, name: "Naina Kapoor", username: "naina@sunggeet.com", password: hashedPassword, role: "employee" },
+      { id: 3, name: "Kabir Sethi", username: "kabir@sunggeet.com", password: hashedPassword, role: "manager" },
+      { id: 4, name: "SUNGGEET Admin", username: "admin@sunggeet.com", password: hashedPassword, role: "admin" },
+      { id: 5, name: "Rhea Fernandes", username: "rhea@sunggeet.com", password: hashedPassword, role: "employee" }
     ];
 
-    for (const u of users) {
-      const hashedPassword = bcrypt.hashSync(u.password, 10);
-      await sql`
-        INSERT INTO users (id, name, email, password, role)
-        VALUES (${u.id}, ${u.name}, ${u.email}, ${hashedPassword}, ${u.role})
-        ON CONFLICT (email) DO NOTHING
-      `;
+    for (const user of dummyUsers) {
+      const existingUser = await sql`SELECT id FROM users WHERE id = ${user.id}`;
+      if (existingUser.length === 0) {
+        await sql`
+          INSERT INTO users (id, name, username, password, role)
+          VALUES (${user.id}, ${user.name}, ${user.username}, ${user.password}, ${user.role})
+        `;
+      }
     }
     console.log("✅ Seed users added.");
 

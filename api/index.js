@@ -21,7 +21,7 @@ const today = new Date("2026-03-19T10:30:00.000Z");
 const publicUser = (user) => ({
   id: user.id,
   name: user.name,
-  email: user.email,
+  username: user.username,
   role: user.role
 });
 
@@ -30,7 +30,7 @@ const byId = async (id) => {
   return users[0] || null;
 };
 
-const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
+const normalizeUsername =  (username)  => String(username || "").trim().toLowerCase();
 
 const isValidRole = (role) => ["employee", "manager", "admin"].includes(role);
 
@@ -38,8 +38,8 @@ const decorateShow = async (show) => {
   const manager = await byId(show.manager_id);
   const employeeResults = await sql`SELECT * FROM users WHERE id = ANY(${show.employee_ids})`;
   const attendanceResults = await sql`
-    SELECT a.*, u.name as employee_name, u.email as employee_email, u.role as employee_role,
-           r.name as reviewer_name, r.email as reviewer_email, r.role as reviewer_role
+    SELECT a.*, u.name as employee_name, u.username as employee_username, u.role as employee_role,
+           r.name as reviewer_name, r.username as reviewer_username, r.role as reviewer_role
     FROM attendance a
     JOIN users u ON a.user_id = u.id
     LEFT JOIN users r ON a.reviewed_by = r.id
@@ -53,8 +53,8 @@ const decorateShow = async (show) => {
     employees: employeeResults.map(publicUser),
     attendance: attendanceResults.map((entry) => ({
       ...entry,
-      employee: { id: entry.user_id, name: entry.employee_name, email: entry.employee_email, role: entry.employee_role },
-      reviewer: entry.reviewed_by ? { id: entry.reviewed_by, name: entry.reviewer_name, email: entry.reviewer_email, role: entry.reviewer_role } : null
+      employee: { id: entry.user_id, name: entry.employee_name, username: entry.employee_username, role: entry.employee_role },
+      reviewer: entry.reviewed_by ? { id: entry.reviewed_by, name: entry.reviewer_name, username: entry.reviewer_username, role: entry.reviewer_role } : null
     }))
   };
 };
@@ -140,7 +140,7 @@ const attendanceLedgerRows = async () => {
 
       return {
         "Artist Name": employee.name,
-        "Artist Email": employee.email,
+        "Artist Username": employee.username,
         "Show Date": show.date.toISOString().split("T")[0],
         "Show Time": show.time,
         Venue: show.location,
@@ -173,13 +173,13 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const { email, password, role } = req.body;
-  const normalizedEmail = normalizeEmail(email);
-  const userResults = await sql`SELECT * FROM users WHERE email = ${normalizedEmail}`;
+  const { username, password, role } = req.body;
+  const normalizedUsername = normalizeUsername (username) ;
+  const userResults = await sql`SELECT * FROM users WHERE username = ${normalizedUsername}`;
   const user = userResults[0];
 
   if (!user || !(await bcrypt.compare(password, user.password))) {
-    return res.status(401).json({ message: "Invalid email or password" });
+    return res.status(401).json({ message: "Invalid username or password" });
   }
 
   if (role && user.role !== role) {
@@ -201,23 +201,23 @@ app.get("/api/users", authenticate, requireRole("admin"), async (_req, res) => {
 app.post("/api/users", authenticate, requireRole("admin"), async (req, res) => {
   try {
     const name = String(req.body.name || "").trim();
-    const email = normalizeEmail(req.body.email);
+    const username = normalizeUsername(req.body.username);
     const password = String(req.body.password || "").trim();
     const role = String(req.body.role || "").trim();
 
-    if (!name || !email || !password || !isValidRole(role)) {
-      return res.status(400).json({ message: "Name, email, password, and valid role are required" });
+    if (!name || !username || !password || !isValidRole(role)) {
+      return res.status(400).json({ message: "Name, username, password, and valid role are required" });
     }
 
-    const existingUser = (await sql`SELECT id FROM users WHERE email = ${email}`)[0];
+    const existingUser = (await sql`SELECT id FROM users WHERE username = ${username}`)[0];
     if (existingUser) {
-      return res.status(409).json({ message: "A member with this email already exists" });
+      return res.status(409).json({ message: "A member with this username already exists" });
     }
 
     const hashedPassword = bcrypt.hashSync(password, 10);
     const [newUser] = await sql`
-      INSERT INTO users (name, email, password, role)
-      VALUES (${name}, ${email}, ${hashedPassword}, ${role})
+      INSERT INTO users (name, username, password, role)
+      VALUES (${name}, ${username}, ${hashedPassword}, ${role})
       RETURNING *
     `;
 
@@ -392,7 +392,7 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin"), async
     .filter((user) => user.role === "employee")
     .map((user) => ({
       "Artist Name": user.name,
-      Email: user.email,
+      Username: user.username,
       "Assigned Shows": allShows.filter((show) => show.employee_ids.includes(user.id)).length,
       "Attendance Marked": allAttendance.filter((entry) => entry.user_id === user.id).length,
       "Approved Shows": allAttendance.filter(
@@ -410,7 +410,7 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin"), async
     .filter((user) => user.role === "manager")
     .map((user) => ({
       Manager: user.name,
-      Email: user.email,
+      Username: user.username,
       "Shows Managed": allShows.filter((show) => show.manager_id === user.id).length,
       "Approvals Done": allAttendance.filter((entry) => entry.reviewed_by === user.id).length,
       "Pending Reviews": allAttendance.filter((entry) => {
@@ -467,14 +467,14 @@ app.get("/api/activity/today", authenticate, async (req, res) => {
   let summary = null;
   if (req.user.role !== "employee") {
     const dailyActivities = await sql`
-      SELECT da.*, u.name, u.email, u.role
+      SELECT da.*, u.name, u.username, u.role
       FROM daily_activity da
       JOIN users u ON da.user_id = u.id
       WHERE da.date = ${todayStr}
     `;
     summary = dailyActivities.map((a) => ({
       ...a,
-      user: { id: a.user_id, name: a.name, email: a.email, role: a.role }
+      user: { id: a.user_id, name: a.name, username: a.username, role: a.role }
     }));
   }
 
