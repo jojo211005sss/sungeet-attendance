@@ -252,9 +252,10 @@ app.post("/api/shows", authenticate, requireRole("admin"), async (req, res) => {
   const showCountForDay = Number(showCountResult[0].count) + 1;
   const id = `SGT-${dateCode}-${String(showCountForDay).padStart(2, "0")}`;
 
-  await sql`
+  const [newShow] = await sql`
     INSERT INTO shows (id, date, time, location, manager_id, employee_ids)
     VALUES (${id}, ${date}, ${time}, ${location}, ${managerId}, ${employeeIds})
+    RETURNING *
   `;
 
   const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
@@ -262,7 +263,7 @@ app.post("/api/shows", authenticate, requireRole("admin"), async (req, res) => {
     allShows.filter((show) => canAccessShow(req.user, show)).map(decorateShow)
   );
 
-  return res.status(201).json({ shows: visibleShows });
+  return res.status(201).json({ show: await decorateShow(newShow), shows: visibleShows });
 });
 
 app.get("/api/shows/:id", authenticate, async (req, res) => {
