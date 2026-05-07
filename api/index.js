@@ -199,28 +199,34 @@ app.get("/api/users", authenticate, requireRole("admin"), async (_req, res) => {
 });
 
 app.post("/api/users", authenticate, requireRole("admin"), async (req, res) => {
-  const name = String(req.body.name || "").trim();
-  const email = normalizeEmail(req.body.email);
-  const password = String(req.body.password || "").trim();
-  const role = String(req.body.role || "").trim();
+  try {
+    const name = String(req.body.name || "").trim();
+    const email = normalizeEmail(req.body.email);
+    const password = String(req.body.password || "").trim();
+    const role = String(req.body.role || "").trim();
 
-  if (!name || !email || !password || !isValidRole(role)) {
-    return res.status(400).json({ message: "Name, email, password, and valid role are required" });
+    if (!name || !email || !password || !isValidRole(role)) {
+      return res.status(400).json({ message: "Name, email, password, and valid role are required" });
+    }
+
+    const existingUser = (await sql`SELECT id FROM users WHERE email = ${email}`)[0];
+    if (existingUser) {
+      return res.status(409).json({ message: "A member with this email already exists" });
+    }
+
+    const hashedPassword = bcrypt.hashSync(password, 10);
+    const [newUser] = await sql`
+      INSERT INTO users (name, email, password, role)
+      VALUES (${name}, ${email}, ${hashedPassword}, ${role})
+      RETURNING *
+    `;
+
+    const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
+    return res.status(201).json({ user: publicUser(newUser), users: allUsers.map(publicUser) });
+  } catch (error) {
+    console.error("User creation error:", error);
+    return res.status(500).json({ message: error.message || "Failed to create user" });
   }
-
-  const existingUser = (await sql`SELECT id FROM users WHERE email = ${email}`)[0];
-  if (existingUser) {
-    return res.status(409).json({ message: "A member with this email already exists" });
-  }
-
-  const [newUser] = await sql`
-    INSERT INTO users (name, email, password, role)
-    VALUES (${name}, ${email}, ${hashedPassword}, ${role})
-    RETURNING *
-  `;
-
-  const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
-  return res.status(201).json({ user: publicUser(newUser), users: allUsers.map(publicUser) });
 });
 
 app.get("/api/shows", authenticate, async (req, res) => {
@@ -232,38 +238,43 @@ app.get("/api/shows", authenticate, async (req, res) => {
 });
 
 app.post("/api/shows", authenticate, requireRole("admin"), async (req, res) => {
-  const date = String(req.body.date || "").trim();
-  const time = String(req.body.time || "").trim();
-  const location = String(req.body.location || "").trim();
-  const managerId = Number(req.body.manager_id);
-  const employeeIds = [...new Set((req.body.employee_ids || []).map(Number))];
-  const manager = await byId(managerId);
+  try {
+    const date = String(req.body.date || "").trim();
+    const time = String(req.body.time || "").trim();
+    const location = String(req.body.location || "").trim();
+    const managerId = Number(req.body.manager_id);
+    const employeeIds = [...new Set((req.body.employee_ids || []).map(Number))];
+    const manager = await byId(managerId);
 
-  if (!date || !time || !location || !manager || manager.role !== "manager") {
-    return res.status(400).json({ message: "Date, time, location, and a valid manager are required" });
+    if (!date || !time || !location || !manager || manager.role !== "manager") {
+      return res.status(400).json({ message: "Date, time, location, and a valid manager are required" });
+    }
+
+    if (!employeeIds.length) {
+      return res.status(400).json({ message: "Assign at least one employee singer" });
+    }
+
+    const dateCode = date.slice(8, 10) + date.slice(5, 7);
+    const showCountResult = await sql`SELECT COUNT(*) FROM shows WHERE date = ${date}`;
+    const showCountForDay = Number(showCountResult[0].count) + 1;
+    const id = `SGT-${dateCode}-${String(showCountForDay).padStart(2, "0")}`;
+
+    const [newShow] = await sql`
+      INSERT INTO shows (id, date, time, location, manager_id, employee_ids)
+      VALUES (${id}, ${date}, ${time}, ${location}, ${managerId}, ${employeeIds})
+      RETURNING *
+    `;
+
+    const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
+    const visibleShows = await Promise.all(
+      allShows.filter((show) => canAccessShow(req.user, show)).map(decorateShow)
+    );
+
+    return res.status(201).json({ show: await decorateShow(newShow), shows: visibleShows });
+  } catch (error) {
+    console.error("Show creation error:", error);
+    return res.status(500).json({ message: error.message || "Failed to create show" });
   }
-
-  if (!employeeIds.length) {
-    return res.status(400).json({ message: "Assign at least one employee singer" });
-  }
-
-  const dateCode = date.slice(8, 10) + date.slice(5, 7);
-  const showCountResult = await sql`SELECT COUNT(*) FROM shows WHERE date = ${date}`;
-  const showCountForDay = Number(showCountResult[0].count) + 1;
-  const id = `SGT-${dateCode}-${String(showCountForDay).padStart(2, "0")}`;
-
-  const [newShow] = await sql`
-    INSERT INTO shows (id, date, time, location, manager_id, employee_ids)
-    VALUES (${id}, ${date}, ${time}, ${location}, ${managerId}, ${employeeIds})
-    RETURNING *
-  `;
-
-  const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
-  const visibleShows = await Promise.all(
-    allShows.filter((show) => canAccessShow(req.user, show)).map(decorateShow)
-  );
-
-  return res.status(201).json({ show: await decorateShow(newShow), shows: visibleShows });
 });
 
 app.get("/api/shows/:id", authenticate, async (req, res) => {
