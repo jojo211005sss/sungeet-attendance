@@ -48,6 +48,7 @@ const decorateShow = async (show) => {
 
   return {
     ...show,
+    date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date,
     manager: publicUser(manager),
     employees: employeeResults.map(publicUser),
     attendance: attendanceResults.map((entry) => ({
