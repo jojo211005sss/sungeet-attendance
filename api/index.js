@@ -348,7 +348,11 @@ app.get("/api/profile", authenticate, async (req, res) => {
     : sql`SELECT a.*, s.id as show_id FROM attendance a JOIN shows s ON a.show_id = s.id`;
   
   const allAttendance = await attendanceQuery;
-  const allShows = await sql`SELECT * FROM shows`;
+  const allShowsRaw = await sql`SELECT * FROM shows`;
+  const allShows = allShowsRaw.map(s => ({
+    ...s,
+    date: s.date instanceof Date ? s.date.toISOString().split("T")[0] : s.date
+  }));
 
   const userAttendance = await Promise.all(
     allAttendance
