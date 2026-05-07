@@ -5,9 +5,6 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import writeXlsxFile from "write-excel-file/node";
 import { Buffer } from "node:buffer";
-import { neon } from "@neondatabase/serverless";
-
-const sql = neon(process.env.DATABASE_URL);
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -18,6 +15,111 @@ app.use(express.json());
 
 const today = new Date("2026-03-19T10:30:00.000Z");
 
+const users = [
+  {
+    id: 1,
+    name: "Aarav Mehta",
+    email: "aarav@sunggeet.com",
+    password: bcrypt.hashSync("password123", 10),
+    role: "employee"
+  },
+  {
+    id: 2,
+    name: "Naina Kapoor",
+    email: "naina@sunggeet.com",
+    password: bcrypt.hashSync("password123", 10),
+    role: "employee"
+  },
+  {
+    id: 3,
+    name: "Rhea Fernandes",
+    email: "rhea@sunggeet.com",
+    password: bcrypt.hashSync("password123", 10),
+    role: "employee"
+  },
+  {
+    id: 4,
+    name: "Kabir Sethi",
+    email: "kabir@sunggeet.com",
+    password: bcrypt.hashSync("password123", 10),
+    role: "manager"
+  },
+  {
+    id: 5,
+    name: "Mira Rao",
+    email: "mira@sunggeet.com",
+    password: bcrypt.hashSync("password123", 10),
+    role: "manager"
+  },
+  {
+    id: 6,
+    name: "SUNGGEET Admin",
+    email: "admin@sunggeet.com",
+    password: bcrypt.hashSync("password123", 10),
+    role: "admin"
+  }
+];
+
+const shows = [
+  {
+    id: "SGT-1903-A",
+    date: "2026-03-19",
+    time: "18:00",
+    location: "Blue Tokai Garden Cafe",
+    manager_id: 4,
+    employee_ids: [1, 2]
+  },
+  {
+    id: "SGT-1903-B",
+    date: "2026-03-19",
+    time: "20:30",
+    location: "The Piano Man Jazz Club",
+    manager_id: 4,
+    employee_ids: [1, 3]
+  },
+  {
+    id: "SGT-2003-A",
+    date: "2026-03-20",
+    time: "19:00",
+    location: "Olive Bistro Courtyard",
+    manager_id: 5,
+    employee_ids: [2, 3]
+  },
+  {
+    id: "SGT-2103-A",
+    date: "2026-03-21",
+    time: "21:00",
+    location: "Soro Village Pub",
+    manager_id: 5,
+    employee_ids: [1, 2, 3]
+  }
+];
+
+let attendance = [
+  {
+    id: 1,
+    show_id: "SGT-1903-A",
+    user_id: 2,
+    status: "marked",
+    approval_status: "approved",
+    marked_at: "2026-03-19T18:06:00.000Z",
+    reviewed_at: "2026-03-19T19:12:00.000Z",
+    reviewed_by: 4
+  },
+  {
+    id: 2,
+    show_id: "SGT-1903-B",
+    user_id: 3,
+    status: "marked",
+    approval_status: "pending",
+    marked_at: "2026-03-19T20:39:00.000Z",
+    reviewed_at: null,
+    reviewed_by: null
+  }
+];
+
+let dailyActivity = [];
+
 const publicUser = (user) => ({
   id: user.id,
   name: user.name,
@@ -25,43 +127,32 @@ const publicUser = (user) => ({
   role: user.role
 });
 
-const byId = async (id) => {
-  const users = await sql`SELECT * FROM users WHERE id = ${Number(id)}`;
-  return users[0] || null;
-};
+const byId = (id) => users.find((user) => user.id === Number(id));
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 
 const isValidRole = (role) => ["employee", "manager", "admin"].includes(role);
 
-const decorateShow = async (show) => {
-  const manager = await byId(show.manager_id);
-  const employeeResults = await sql`SELECT * FROM users WHERE id = ANY(${show.employee_ids})`;
-  const attendanceResults = await sql`
-    SELECT a.*, u.name as employee_name, u.email as employee_email, u.role as employee_role,
-           r.name as reviewer_name, r.email as reviewer_email, r.role as reviewer_role
-    FROM attendance a
-    JOIN users u ON a.user_id = u.id
-    LEFT JOIN users r ON a.reviewed_by = r.id
-    WHERE a.show_id = ${show.id}
-  `;
-
+const decorateShow = (show) => {
+  const manager = byId(show.manager_id);
   return {
     ...show,
     manager: publicUser(manager),
-    employees: employeeResults.map(publicUser),
-    attendance: attendanceResults.map((entry) => ({
-      ...entry,
-      employee: { id: entry.user_id, name: entry.employee_name, email: entry.employee_email, role: entry.employee_role },
-      reviewer: entry.reviewed_by ? { id: entry.reviewed_by, name: entry.reviewer_name, email: entry.reviewer_email, role: entry.reviewer_role } : null
-    }))
+    employees: show.employee_ids.map((id) => publicUser(byId(id))),
+    attendance: attendance
+      .filter((entry) => entry.show_id === show.id)
+      .map((entry) => ({
+        ...entry,
+        employee: publicUser(byId(entry.user_id)),
+        reviewer: entry.reviewed_by ? publicUser(byId(entry.reviewed_by)) : null
+      }))
   };
 };
 
 const signToken = (user) =>
   jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: "12h" });
 
-const authenticate = async (req, res, next) => {
+const authenticate = (req, res, next) => {
   const header = req.headers.authorization;
   const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
 
@@ -71,7 +162,7 @@ const authenticate = async (req, res, next) => {
 
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = await byId(payload.id);
+    const user = byId(payload.id);
 
     if (!user) {
       return res.status(401).json({ message: "User no longer exists" });
@@ -98,49 +189,40 @@ const canAccessShow = (user, show) => {
   return show.employee_ids.includes(user.id);
 };
 
-const getStats = async (user) => {
-  const allShows = await sql`SELECT * FROM shows`;
-  const visibleShows = allShows.filter((show) => canAccessShow(user, show));
-  const visibleShowIds = visibleShows.map((show) => show.id);
-
-  let visibleAttendance;
-  if (user.role === "employee") {
-    visibleAttendance = await sql`SELECT * FROM attendance WHERE user_id = ${user.id}`;
-  } else if (visibleShowIds.length > 0) {
-    visibleAttendance = await sql`SELECT * FROM attendance WHERE show_id = ANY(${visibleShowIds})`;
-  } else {
-    visibleAttendance = [];
-  }
-
-  const approvalsDone = user.role === "employee" ? 0 : (await sql`SELECT COUNT(*) FROM attendance WHERE reviewed_by = ${user.id}`)[0].count;
+const getStats = (user) => {
+  const visibleShows = shows.filter((show) => canAccessShow(user, show));
+  const visibleShowIds = new Set(visibleShows.map((show) => show.id));
+  const visibleAttendance =
+    user.role === "employee"
+      ? attendance.filter((entry) => entry.user_id === user.id)
+      : attendance.filter((entry) => visibleShowIds.has(entry.show_id));
 
   return {
     totalShows: visibleShows.length,
     approvedShows: visibleAttendance.filter((entry) => entry.approval_status === "approved").length,
     pendingShows: visibleAttendance.filter((entry) => entry.approval_status === "pending").length,
     rejectedShows: visibleAttendance.filter((entry) => entry.approval_status === "rejected").length,
-    approvalsDone: Number(approvalsDone)
+    approvalsDone:
+      user.role === "employee"
+        ? 0
+        : attendance.filter((entry) => entry.reviewed_by === user.id).length
   };
 };
 
-const attendanceLedgerRows = async () => {
-  const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
-  const allUsers = await sql`SELECT * FROM users`;
-  const allAttendance = await sql`SELECT * FROM attendance`;
-
-  return allShows.flatMap((show) => {
-    const manager = allUsers.find((u) => u.id === show.manager_id);
+const attendanceLedgerRows = () =>
+  shows.flatMap((show) => {
+    const manager = byId(show.manager_id);
 
     return show.employee_ids.map((employeeId) => {
-      const employee = allUsers.find((u) => u.id === employeeId);
-      const entry = allAttendance.find(
+      const employee = byId(employeeId);
+      const entry = attendance.find(
         (candidate) => candidate.show_id === show.id && candidate.user_id === employeeId
       );
 
       return {
         "Artist Name": employee.name,
         "Artist Email": employee.email,
-        "Show Date": show.date.toISOString().split("T")[0],
+        "Show Date": show.date,
         "Show Time": show.time,
         Venue: show.location,
         "Show ID": show.id,
@@ -152,7 +234,6 @@ const attendanceLedgerRows = async () => {
       };
     });
   });
-};
 
 const titleCase = (value) =>
   String(value)
@@ -167,11 +248,13 @@ const formatTimestamp = (value) =>
     timeZone: "Asia/Kolkata"
   }).format(new Date(value));
 
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, now: today.toISOString() });
+});
+
 app.post("/api/auth/login", async (req, res) => {
   const { email, password, role } = req.body;
-  const normalizedEmail = normalizeEmail(email);
-  const userResults = await sql`SELECT * FROM users WHERE email = ${normalizedEmail}`;
-  const user = userResults[0];
+  const user = users.find((candidate) => candidate.email === email);
 
   if (!user || !(await bcrypt.compare(password, user.password))) {
     return res.status(401).json({ message: "Invalid email or password" });
@@ -184,16 +267,15 @@ app.post("/api/auth/login", async (req, res) => {
   return res.json({ token: signToken(user), user: publicUser(user) });
 });
 
-app.get("/api/auth/me", authenticate, async (req, res) => {
-  res.json({ user: publicUser(req.user), stats: await getStats(req.user) });
+app.get("/api/auth/me", authenticate, (req, res) => {
+  res.json({ user: publicUser(req.user), stats: getStats(req.user) });
 });
 
-app.get("/api/users", authenticate, requireRole("admin"), async (_req, res) => {
-  const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
-  res.json({ users: allUsers.map(publicUser) });
+app.get("/api/users", authenticate, requireRole("admin"), (_req, res) => {
+  res.json({ users: users.map(publicUser) });
 });
 
-app.post("/api/users", authenticate, requireRole("admin"), async (req, res) => {
+app.post("/api/users", authenticate, requireRole("admin"), (req, res) => {
   const name = String(req.body.name || "").trim();
   const email = normalizeEmail(req.body.email);
   const password = String(req.body.password || "").trim();
@@ -203,66 +285,64 @@ app.post("/api/users", authenticate, requireRole("admin"), async (req, res) => {
     return res.status(400).json({ message: "Name, email, password, and valid role are required" });
   }
 
-  const existingUser = (await sql`SELECT id FROM users WHERE email = ${email}`)[0];
-  if (existingUser) {
+  if (users.some((user) => user.email === email)) {
     return res.status(409).json({ message: "A member with this email already exists" });
   }
 
-  const hashedPassword = bcrypt.hashSync(password, 10);
-  await sql`
-    INSERT INTO users (name, email, password, role)
-    VALUES (${name}, ${email}, ${hashedPassword}, ${role})
-  `;
+  const user = {
+    id: Math.max(...users.map((candidate) => candidate.id)) + 1,
+    name,
+    email,
+    password: bcrypt.hashSync(password, 10),
+    role
+  };
 
-  const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
-  return res.status(201).json({ users: allUsers.map(publicUser) });
+  users.push(user);
+
+  return res.status(201).json({ user: publicUser(user), users: users.map(publicUser) });
 });
 
-app.get("/api/shows", authenticate, async (req, res) => {
-  const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
-  const visibleShows = await Promise.all(
-    allShows.filter((show) => canAccessShow(req.user, show)).map(decorateShow)
-  );
+app.get("/api/shows", authenticate, (req, res) => {
+  const visibleShows = shows.filter((show) => canAccessShow(req.user, show)).map(decorateShow);
   res.json({ shows: visibleShows });
 });
 
-app.post("/api/shows", authenticate, requireRole("admin"), async (req, res) => {
+app.post("/api/shows", authenticate, requireRole("admin"), (req, res) => {
   const date = String(req.body.date || "").trim();
   const time = String(req.body.time || "").trim();
   const location = String(req.body.location || "").trim();
   const managerId = Number(req.body.manager_id);
   const employeeIds = [...new Set((req.body.employee_ids || []).map(Number))];
-  const manager = await byId(managerId);
+  const manager = byId(managerId);
+  const employees = employeeIds.map(byId);
 
   if (!date || !time || !location || !manager || manager.role !== "manager") {
     return res.status(400).json({ message: "Date, time, location, and a valid manager are required" });
   }
 
-  if (!employeeIds.length) {
-    return res.status(400).json({ message: "Assign at least one employee singer" });
+  if (!employeeIds.length || employees.some((employee) => !employee || employee.role !== "employee")) {
+    return res.status(400).json({ message: "Assign at least one valid employee singer" });
   }
 
   const dateCode = date.slice(8, 10) + date.slice(5, 7);
-  const showCountResult = await sql`SELECT COUNT(*) FROM shows WHERE date = ${date}`;
-  const showCountForDay = Number(showCountResult[0].count) + 1;
+  const showCountForDay = shows.filter((show) => show.date === date).length + 1;
   const id = `SGT-${dateCode}-${String(showCountForDay).padStart(2, "0")}`;
+  const show = {
+    id,
+    date,
+    time,
+    location,
+    manager_id: managerId,
+    employee_ids: employeeIds
+  };
 
-  await sql`
-    INSERT INTO shows (id, date, time, location, manager_id, employee_ids)
-    VALUES (${id}, ${date}, ${time}, ${location}, ${managerId}, ${employeeIds})
-  `;
+  shows.push(show);
 
-  const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
-  const visibleShows = await Promise.all(
-    allShows.filter((show) => canAccessShow(req.user, show)).map(decorateShow)
-  );
-
-  return res.status(201).json({ shows: visibleShows });
+  return res.status(201).json({ show: decorateShow(show), shows: shows.map(decorateShow) });
 });
 
-app.get("/api/shows/:id", authenticate, async (req, res) => {
-  const showResult = await sql`SELECT * FROM shows WHERE id = ${req.params.id}`;
-  const show = showResult[0];
+app.get("/api/shows/:id", authenticate, (req, res) => {
+  const show = shows.find((candidate) => candidate.id === req.params.id);
 
   if (!show) {
     return res.status(404).json({ message: "Show not found" });
@@ -272,39 +352,44 @@ app.get("/api/shows/:id", authenticate, async (req, res) => {
     return res.status(403).json({ message: "You do not have access to this show" });
   }
 
-  return res.json({ show: await decorateShow(show) });
+  return res.json({ show: decorateShow(show) });
 });
 
-app.post("/api/attendance", authenticate, requireRole("employee"), async (req, res) => {
+app.post("/api/attendance", authenticate, requireRole("employee"), (req, res) => {
   const { show_id } = req.body;
-  const showResult = await sql`SELECT * FROM shows WHERE id = ${show_id}`;
-  const show = showResult[0];
+  const show = shows.find((candidate) => candidate.id === show_id);
 
   if (!show || !show.employee_ids.includes(req.user.id)) {
     return res.status(404).json({ message: "Assigned show not found" });
   }
 
-  const existingResult = await sql`
-    SELECT id FROM attendance WHERE show_id = ${show_id} AND user_id = ${req.user.id}
-  `;
+  const existing = attendance.find(
+    (entry) => entry.show_id === show_id && entry.user_id === req.user.id
+  );
 
-  if (existingResult.length > 0) {
+  if (existing) {
     return res.status(409).json({ message: "Attendance has already been marked for this show" });
   }
 
-  const [entry] = await sql`
-    INSERT INTO attendance (show_id, user_id, status, approval_status, marked_at)
-    VALUES (${show_id}, ${req.user.id}, 'marked', 'pending', ${new Date().toISOString()})
-    RETURNING *
-  `;
+  const entry = {
+    id: attendance.length + 1,
+    show_id,
+    user_id: req.user.id,
+    status: "marked",
+    approval_status: "pending",
+    marked_at: new Date().toISOString(),
+    reviewed_at: null,
+    reviewed_by: null
+  };
 
-  return res.status(201).json({ attendance: entry, show: await decorateShow(show) });
+  attendance = [...attendance, entry];
+
+  return res.status(201).json({ attendance: entry, show: decorateShow(show) });
 });
 
-app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "admin"), async (req, res) => {
+app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "admin"), (req, res) => {
   const { approval_status } = req.body;
-  const entryResult = await sql`SELECT * FROM attendance WHERE id = ${Number(req.params.id)}`;
-  const entry = entryResult[0];
+  const entry = attendance.find((candidate) => candidate.id === Number(req.params.id));
 
   if (!["approved", "rejected"].includes(approval_status)) {
     return res.status(400).json({ message: "Approval status must be approved or rejected" });
@@ -314,8 +399,7 @@ app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "ad
     return res.status(404).json({ message: "Attendance entry not found" });
   }
 
-  const showResult = await sql`SELECT * FROM shows WHERE id = ${entry.show_id}`;
-  const show = showResult[0];
+  const show = shows.find((candidate) => candidate.id === entry.show_id);
 
   if (req.user.role === "manager" && show.manager_id !== req.user.id) {
     return res.status(403).json({ message: "Managers can only review their own shows" });
@@ -325,94 +409,75 @@ app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "ad
     return res.status(409).json({ message: "Only an admin can edit a finalized approval" });
   }
 
-  const [updatedEntry] = await sql`
-    UPDATE attendance
-    SET approval_status = ${approval_status},
-        reviewed_at = ${new Date().toISOString()},
-        reviewed_by = ${req.user.id}
-    WHERE id = ${entry.id}
-    RETURNING *
-  `;
+  entry.approval_status = approval_status;
+  entry.reviewed_at = new Date().toISOString();
+  entry.reviewed_by = req.user.id;
 
-  return res.json({ attendance: updatedEntry, show: await decorateShow(show) });
+  return res.json({ attendance: entry, show: decorateShow(show) });
 });
 
-app.get("/api/profile", authenticate, async (req, res) => {
-  const attendanceQuery = req.user.role === "employee" 
-    ? sql`SELECT a.*, s.id as show_id FROM attendance a JOIN shows s ON a.show_id = s.id WHERE a.user_id = ${req.user.id}`
-    : sql`SELECT a.*, s.id as show_id FROM attendance a JOIN shows s ON a.show_id = s.id`;
-  
-  const allAttendance = await attendanceQuery;
-  const allShows = await sql`SELECT * FROM shows`;
+app.get("/api/profile", authenticate, (req, res) => {
+  const userAttendance = attendance
+    .filter((entry) => (req.user.role === "employee" ? entry.user_id === req.user.id : true))
+    .filter((entry) => {
+      const show = shows.find((candidate) => candidate.id === entry.show_id);
+      return canAccessShow(req.user, show);
+    })
+    .map((entry) => ({
+      ...entry,
+      show: shows.find((show) => show.id === entry.show_id),
+      employee: publicUser(byId(entry.user_id))
+    }));
 
-  const userAttendance = await Promise.all(
-    allAttendance
-      .filter((entry) => {
-        const show = allShows.find((candidate) => candidate.id === entry.show_id);
-        return canAccessShow(req.user, show);
-      })
-      .map(async (entry) => ({
-        ...entry,
-        show: allShows.find((show) => show.id === entry.show_id),
-        employee: publicUser(await byId(entry.user_id))
-      }))
-  );
-
-  res.json({ stats: await getStats(req.user), activity: userAttendance });
+  res.json({ stats: getStats(req.user), activity: userAttendance });
 });
 
 app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin"), async (_req, res) => {
-  const rows = await attendanceLedgerRows();
-  const allUsers = await sql`SELECT * FROM users`;
-  const allShows = await sql`SELECT * FROM shows`;
-  const allAttendance = await sql`SELECT * FROM attendance`;
-
-  const summaryByEmployee = allUsers
+  const rows = attendanceLedgerRows();
+  const summaryByEmployee = users
     .filter((user) => user.role === "employee")
     .map((user) => ({
       "Artist Name": user.name,
       Email: user.email,
-      "Assigned Shows": allShows.filter((show) => show.employee_ids.includes(user.id)).length,
-      "Attendance Marked": allAttendance.filter((entry) => entry.user_id === user.id).length,
-      "Approved Shows": allAttendance.filter(
+      "Assigned Shows": shows.filter((show) => show.employee_ids.includes(user.id)).length,
+      "Attendance Marked": attendance.filter((entry) => entry.user_id === user.id).length,
+      "Approved Shows": attendance.filter(
         (entry) => entry.user_id === user.id && entry.approval_status === "approved"
       ).length,
-      "Pending Approval": allAttendance.filter(
+      "Pending Approval": attendance.filter(
         (entry) => entry.user_id === user.id && entry.approval_status === "pending"
       ).length,
-      Rejected: allAttendance.filter(
+      Rejected: attendance.filter(
         (entry) => entry.user_id === user.id && entry.approval_status === "rejected"
       ).length
     }));
-
-  const summaryByManager = allUsers
+  const summaryByManager = users
     .filter((user) => user.role === "manager")
     .map((user) => ({
       Manager: user.name,
       Email: user.email,
-      "Shows Managed": allShows.filter((show) => show.manager_id === user.id).length,
-      "Approvals Done": allAttendance.filter((entry) => entry.reviewed_by === user.id).length,
-      "Pending Reviews": allAttendance.filter((entry) => {
-        const show = allShows.find((candidate) => candidate.id === entry.show_id);
-        return show && show.manager_id === user.id && entry.approval_status === "pending";
+      "Shows Managed": shows.filter((show) => show.manager_id === user.id).length,
+      "Approvals Done": attendance.filter((entry) => entry.reviewed_by === user.id).length,
+      "Pending Reviews": attendance.filter((entry) => {
+        const show = shows.find((candidate) => candidate.id === entry.show_id);
+        return show.manager_id === user.id && entry.approval_status === "pending";
       }).length
     }));
-
-  const showSummary = allShows.map((show) => ({
+  const showSummary = shows.map((show) => ({
     "Show ID": show.id,
-    Date: show.date.toISOString().split("T")[0],
+    Date: show.date,
     Time: show.time,
     Venue: show.location,
-    Manager: allUsers.find((u) => u.id === show.manager_id)?.name || "Unknown",
+    Manager: byId(show.manager_id).name,
     "Assigned Artists": show.employee_ids.length,
-    "Marked Attendance": allAttendance.filter((entry) => entry.show_id === show.id).length,
-    Approved: allAttendance.filter(
+    "Marked Attendance": attendance.filter((entry) => entry.show_id === show.id).length,
+    Approved: attendance.filter(
       (entry) => entry.show_id === show.id && entry.approval_status === "approved"
     ).length,
-    Pending: allAttendance.filter(
+    Pending: attendance.filter(
       (entry) => entry.show_id === show.id && entry.approval_status === "pending"
     ).length,
-    Rejected: allAttendance.filter(
+    Rejected: attendance.filter(
       (entry) => entry.show_id === show.id && entry.approval_status === "rejected"
     ).length
   }));
@@ -437,43 +502,48 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin"), async
   return res.send(Buffer.from(buffer));
 });
 
-app.get("/api/activity/today", authenticate, async (req, res) => {
+app.get("/api/activity/today", authenticate, (req, res) => {
   const todayStr = new Date().toISOString().split("T")[0];
-  const userStatusResult = await sql`
-    SELECT status FROM daily_activity WHERE user_id = ${req.user.id} AND date = ${todayStr}
-  `;
+  const userStatus = dailyActivity.find(
+    (a) => a.user_id === req.user.id && a.date === todayStr
+  );
 
   let summary = null;
   if (req.user.role !== "employee") {
-    const dailyActivities = await sql`
-      SELECT da.*, u.name, u.email, u.role
-      FROM daily_activity da
-      JOIN users u ON da.user_id = u.id
-      WHERE da.date = ${todayStr}
-    `;
-    summary = dailyActivities.map((a) => ({
-      ...a,
-      user: { id: a.user_id, name: a.name, email: a.email, role: a.role }
-    }));
+    summary = dailyActivity
+      .filter((a) => a.date === todayStr)
+      .map((a) => ({
+        ...a,
+        user: publicUser(byId(a.user_id))
+      }));
   }
 
-  res.json({ status: userStatusResult[0]?.status || null, summary });
+  res.json({ status: userStatus?.status || null, summary });
 });
 
-app.post("/api/activity", authenticate, async (req, res) => {
+app.post("/api/activity", authenticate, (req, res) => {
   const { status } = req.body;
   if (!["active", "inactive"].includes(status)) {
     return res.status(400).json({ message: "Status must be active or inactive" });
   }
 
   const todayStr = new Date().toISOString().split("T")[0];
-  
-  await sql`
-    INSERT INTO daily_activity (user_id, date, status, updated_at)
-    VALUES (${req.user.id}, ${todayStr}, ${status}, ${new Date().toISOString()})
-    ON CONFLICT (user_id, date) DO UPDATE
-    SET status = EXCLUDED.status, updated_at = EXCLUDED.updated_at
-  `;
+  const existingIndex = dailyActivity.findIndex(
+    (a) => a.user_id === req.user.id && a.date === todayStr
+  );
+
+  const entry = {
+    user_id: req.user.id,
+    date: todayStr,
+    status,
+    updated_at: new Date().toISOString()
+  };
+
+  if (existingIndex > -1) {
+    dailyActivity[existingIndex] = entry;
+  } else {
+    dailyActivity.push(entry);
+  }
 
   res.json({ message: "Status updated", status });
 });
