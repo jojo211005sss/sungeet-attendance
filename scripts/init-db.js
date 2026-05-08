@@ -63,7 +63,7 @@ async function init() {
     console.log("✅ Tables created successfully.");
 
     // 6. Seed Users
-    const hashedPassword = bcrypt.hashSync("password123", 10);
+    const hashedPassword = bcrypt.hashSync("dipfYh-pyfqeb-gyhzu1", 10);
     const dummyUsers = [
       { id: 1, name: "Aarav Mehta", username: "aarav@sunggeet.com", password: hashedPassword, role: "employee" },
       { id: 2, name: "Naina Kapoor", username: "naina@sunggeet.com", password: hashedPassword, role: "employee" },
