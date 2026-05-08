@@ -20,15 +20,13 @@ npm run dev
 Frontend: http://localhost:5173  
 Backend: http://localhost:4000
 
-## Demo Accounts
+## Getting Started
 
-All passwords are `password123`.
+1.  **Configure Environment:** Copy `.env.example` to `.env` and set your `DATABASE_URL` and `JWT_SECRET`.
+2.  **Initialize Database:** Run `node scripts/init-db.js` to set up tables and initial accounts.
+3.  **Start Development:** Run `npm run dev` to start both the frontend and backend.
 
-| Role | Email |
-| --- | --- |
-| Employee | `aarav@sunggeet.com` |
-| Manager | `kabir@sunggeet.com` |
-| Admin | `admin@sunggeet.com` |
+For security, please change the default passwords for all administrative accounts immediately after initialization.
 
 ## Core Flows
 
