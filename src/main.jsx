@@ -26,12 +26,7 @@ import "./styles.css";
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "/api" : `http://${window.location.hostname}:4000/api`);
 
-const demoAccounts = {
-  employee: { username: "aarav@sunggeet.com", password: "password123" },
-  manager: { username: "kabir@sunggeet.com", password: "password123" },
-  admin: { username: "admin@sunggeet.com", password: "password123" },
-  superior: { username: "superior@sunggeet.com", password: "password123" }
-};
+
 
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem("sunggeet-token"));
@@ -109,16 +104,9 @@ function LoadingScreen() {
 }
 
 function LoginScreen({ onLogin }) {
-  const [role, setRole] = useState("employee");
-  const [form, setForm] = useState(demoAccounts.employee);
+  const [form, setForm] = useState({ username: "", password: "" });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  const changeRole = (nextRole) => {
-    setRole(nextRole);
-    setForm(demoAccounts[nextRole]);
-    setError("");
-  };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -128,7 +116,7 @@ function LoginScreen({ onLogin }) {
     try {
       const data = await api("/auth/login", {
         method: "POST",
-        body: { ...form, role }
+        body: form
       });
       onLogin({ nextToken: data.token, nextUser: data.user });
     } catch (requestError) {
@@ -178,22 +166,7 @@ function LoginScreen({ onLogin }) {
         >
           <div className="mb-7">
             <h2 className="text-2xl font-semibold tracking-tight">Login</h2>
-            <p className="mt-2 text-sm text-slate-400">Use a demo role to enter the matching dashboard.</p>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-1">
-            {["employee", "manager", "admin", "superior"].map((item) => (
-              <button
-                className={`rounded-lg px-3 py-2 text-sm capitalize transition ${
-                  role === item ? "bg-indigoSoft text-white" : "text-slate-400 hover:text-white"
-                }`}
-                key={item}
-                type="button"
-                onClick={() => changeRole(item)}
-              >
-                {item}
-              </button>
-            ))}
+            <p className="mt-2 text-sm text-slate-400">Enter your credentials to access the dashboard.</p>
           </div>
 
           <div className="space-y-4 rounded-xl border border-white/10 bg-white/5 p-6 backdrop-blur-md">
@@ -392,7 +365,7 @@ function ProfileView({ token, user }) {
             <h2 className="section-title">Recent activity</h2>
             <p className="section-copy">Submitted attendance and manager decisions.</p>
           </div>
-          {user.role === "admin" && <ExportButton token={token} />}
+          {(user.role === "admin" || user.role === "superior") && <ExportButton token={token} />}
         </div>
         <div className="divide-y divide-white/10">
           {profile.activity.length === 0 ? (
@@ -1308,7 +1281,7 @@ function ManagerShows({ shows, token, role, onChanged, expanded = false }) {
   return (
     <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
       <div className="space-y-3">
-        <h2 className="section-title">{role === "admin" ? "All shows" : "Assigned shows"}</h2>
+        <h2 className="section-title">{(role === "admin" || role === "superior") ? "All shows" : "Assigned shows"}</h2>
         {shows.map((show) => (
           <ShowCard
             key={show.id}
