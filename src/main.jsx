@@ -4,11 +4,14 @@ import {
   CalendarBlank,
   Check,
   Clock,
+  CurrencyInr,
   DownloadSimple,
+  FloppyDisk,
   GearSix,
   House,
   List,
   MapPin,
+  PencilSimple,
   Plus,
   SignOut,
   UserCircle,
@@ -417,6 +420,7 @@ function AdminView({ token }) {
   const { users, shows, loading, refresh } = useAdminData(token);
   const managers = useMemo(() => users.filter((user) => user.role === "manager"), [users]);
   const employees = useMemo(() => users.filter((user) => user.role === "employee"), [users]);
+  const [selectedShow, setSelectedShow] = useState(null);
 
   if (loading) return <DashboardSkeleton />;
 
@@ -446,25 +450,271 @@ function AdminView({ token }) {
 
         <AdminList
           title="Show roster"
-          copy={`${shows.length} shows scheduled`}
+          copy={`${shows.length} shows scheduled — click to edit`}
           empty="Create a show and it will appear here."
         >
           {shows.map((show) => (
-            <div className="admin-row" key={show.id}>
+            <button
+              className="admin-row w-full text-left transition-all hover:bg-white/[0.04] hover:border-indigo-400/30 group cursor-pointer"
+              key={show.id}
+              onClick={() => setSelectedShow(show)}
+            >
               <div className="min-w-0">
                 <p className="truncate font-medium text-white">{show.location}</p>
                 <p className="text-sm text-slate-400">
                   {formatDate(show.date)} at {formatTime(show.time)}
                 </p>
               </div>
-              <div className="text-right text-sm text-slate-400">
-                <p>{show.manager.name}</p>
-                <p>{show.employees.length} singers</p>
+              <div className="flex items-center gap-3">
+                <div className="text-right text-sm text-slate-400">
+                  <p>{show.manager.name}</p>
+                  <p>{show.employees.length} singers</p>
+                </div>
+                <div className="grid size-8 place-items-center rounded-lg bg-white/[0.04] text-slate-400 opacity-0 transition-opacity group-hover:opacity-100">
+                  <PencilSimple size={16} />
+                </div>
               </div>
-            </div>
+            </button>
           ))}
         </AdminList>
       </section>
+
+      {selectedShow && (
+        <ShowDetailModal
+          show={selectedShow}
+          token={token}
+          allEmployees={employees}
+          managers={managers}
+          onClose={() => setSelectedShow(null)}
+          onSaved={() => {
+            setSelectedShow(null);
+            refresh();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ShowDetailModal({ show, token, allEmployees, managers, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    date: show.date,
+    time: show.time,
+    location: show.location,
+    manager_id: show.manager.id,
+    employee_ids: show.employees.map((e) => e.id),
+    employee_pay: show.employee_pay || {}
+  });
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+
+  const toggleEmployee = (id) => {
+    setForm((current) => {
+      const newIds = current.employee_ids.includes(id)
+        ? current.employee_ids.filter((eid) => eid !== id)
+        : [...current.employee_ids, id];
+      const newPay = { ...current.employee_pay };
+      if (!newIds.includes(id)) {
+        delete newPay[String(id)];
+      }
+      return { ...current, employee_ids: newIds, employee_pay: newPay };
+    });
+  };
+
+  const setPay = (id, value) => {
+    setForm((current) => ({
+      ...current,
+      employee_pay: {
+        ...current.employee_pay,
+        [String(id)]: value === "" ? null : Number(value)
+      }
+    }));
+  };
+
+  const save = async () => {
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+    try {
+      await api(`/shows/${show.id}`, {
+        token,
+        method: "PATCH",
+        body: {
+          date: form.date,
+          time: form.time,
+          location: form.location,
+          manager_id: Number(form.manager_id),
+          employee_ids: form.employee_ids.map(Number),
+          employee_pay: form.employee_pay
+        }
+      });
+      setMessage("Show updated successfully");
+      setTimeout(() => onSaved(), 600);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const totalPay = Object.values(form.employee_pay).reduce((sum, v) => sum + (Number(v) || 0), 0);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[1.25rem] border border-white/10 bg-[#111827] p-6 shadow-lift"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 mb-6">
+          <div className="flex items-start gap-3">
+            <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-indigo-300/20 bg-indigo-500/12 text-indigo-100">
+              <PencilSimple size={20} />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight text-white">Edit show</h2>
+              <p className="text-sm text-slate-400">{show.id} — Update members and assign pay</p>
+            </div>
+          </div>
+          <button className="icon-button" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Show details */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <TextField
+            label="Date"
+            type="date"
+            value={form.date}
+            onChange={(value) => setForm({ ...form, date: value })}
+          />
+          <TextField
+            label="Time"
+            type="time"
+            value={form.time}
+            onChange={(value) => setForm({ ...form, time: value })}
+          />
+          <div className="md:col-span-2">
+            <TextField
+              label="Location"
+              value={form.location}
+              onChange={(value) => setForm({ ...form, location: value })}
+            />
+          </div>
+          <label className="md:col-span-2">
+            <span className="mb-2 block text-sm text-slate-300">Manager</span>
+            <select
+              className="field"
+              value={form.manager_id}
+              onChange={(e) => setForm({ ...form, manager_id: e.target.value })}
+            >
+              {managers.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {/* Members + Pay */}
+        <div className="mt-6">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-medium text-slate-300">Assigned singers & pay</p>
+            {totalPay > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-200">
+                <CurrencyInr size={12} weight="bold" />
+                Total: ₹{totalPay.toLocaleString("en-IN")}
+              </span>
+            )}
+          </div>
+          <div className="space-y-2">
+            {allEmployees.map((employee) => {
+              const isAssigned = form.employee_ids.includes(employee.id);
+              const isExpanded = expandedId === employee.id && isAssigned;
+              const payValue = form.employee_pay[String(employee.id)];
+
+              return (
+                <div
+                  key={employee.id}
+                  className={`rounded-xl border transition-all ${
+                    isAssigned
+                      ? "border-indigo-400/20 bg-indigo-500/[0.06]"
+                      : "border-white/5 bg-white/[0.02]"
+                  }`}
+                >
+                  <div className="flex items-center gap-3 p-3">
+                    <input
+                      type="checkbox"
+                      checked={isAssigned}
+                      onChange={() => toggleEmployee(employee.id)}
+                      className="shrink-0"
+                    />
+                    <button
+                      className="flex flex-1 items-center gap-3 min-w-0 text-left"
+                      onClick={() => {
+                        if (isAssigned) {
+                          setExpandedId(isExpanded ? null : employee.id);
+                        }
+                      }}
+                    >
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-slate-300 shrink-0">
+                        {employee.name.charAt(0)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate font-medium text-slate-200">{employee.name}</span>
+                        <span className="block text-xs text-slate-500">{employee.username}</span>
+                      </div>
+                    </button>
+                    {isAssigned && payValue != null && payValue !== "" && (
+                      <span className="inline-flex items-center gap-1 rounded-lg border border-amber-400/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-200 shrink-0">
+                        ₹{Number(payValue).toLocaleString("en-IN")}
+                      </span>
+                    )}
+                  </div>
+
+                  {isExpanded && (
+                    <div className="border-t border-white/5 px-3 py-3">
+                      <label className="flex items-center gap-2">
+                        <span className="text-sm text-slate-400 shrink-0">Pay (₹)</span>
+                        <div className="relative flex-1">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">₹</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="100"
+                            className="field pl-7 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            placeholder="0"
+                            value={payValue ?? ""}
+                            onChange={(e) => setPay(employee.id, e.target.value)}
+                          />
+                        </div>
+                      </label>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Feedback + Actions */}
+        <FormFeedback error={error} message={message} />
+        <div className="mt-6 flex justify-end gap-3">
+          <button className="ghost-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="primary-button inline-flex items-center gap-2"
+            disabled={submitting || form.employee_ids.length === 0}
+            onClick={save}
+          >
+            <FloppyDisk size={18} />
+            {submitting ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

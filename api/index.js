@@ -46,11 +46,14 @@ const decorateShow = async (show) => {
     WHERE a.show_id = ${show.id}
   `;
 
+  const payMap = show.employee_pay || {};
+
   return {
     ...show,
     date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date,
+    employee_pay: payMap,
     manager: publicUser(manager),
-    employees: employeeResults.map(publicUser),
+    employees: employeeResults.map((emp) => ({ ...publicUser(emp), pay: payMap[String(emp.id)] ?? null })),
     attendance: attendanceResults.map((entry) => ({
       ...entry,
       employee: { id: entry.user_id, name: entry.employee_name, username: entry.employee_username, role: entry.employee_role },
@@ -131,12 +134,14 @@ const attendanceLedgerRows = async () => {
 
   return allShows.flatMap((show) => {
     const manager = allUsers.find((u) => u.id === show.manager_id);
+    const payMap = show.employee_pay || {};
 
     return show.employee_ids.map((employeeId) => {
       const employee = allUsers.find((u) => u.id === employeeId);
       const entry = allAttendance.find(
         (candidate) => candidate.show_id === show.id && candidate.user_id === employeeId
       );
+      const pay = payMap[String(employeeId)];
 
       return {
         "Artist Name": employee.name,
@@ -146,6 +151,7 @@ const attendanceLedgerRows = async () => {
         Venue: show.location,
         "Show ID": show.id,
         Manager: manager.name,
+        "Pay (₹)": pay != null ? Number(pay) : "",
         "Attendance Status": entry ? "Marked" : "Not Marked",
         "Approval Status": entry ? titleCase(entry.approval_status) : "Waiting",
         "Marked At": entry?.marked_at ? formatTimestamp(entry.marked_at) : "",
@@ -244,6 +250,7 @@ app.post("/api/shows", authenticate, requireRole("admin"), async (req, res) => {
     const location = String(req.body.location || "").trim();
     const managerId = Number(req.body.manager_id);
     const employeeIds = [...new Set((req.body.employee_ids || []).map(Number))];
+    const employeePay = req.body.employee_pay || {};
     const manager = await byId(managerId);
 
     if (!date || !time || !location || !manager || manager.role !== "manager") {
@@ -260,8 +267,8 @@ app.post("/api/shows", authenticate, requireRole("admin"), async (req, res) => {
     const id = `SGT-${dateCode}-${String(showCountForDay).padStart(2, "0")}`;
 
     const [newShow] = await sql`
-      INSERT INTO shows (id, date, time, location, manager_id, employee_ids)
-      VALUES (${id}, ${date}, ${time}, ${location}, ${managerId}, ${employeeIds})
+      INSERT INTO shows (id, date, time, location, manager_id, employee_ids, employee_pay)
+      VALUES (${id}, ${date}, ${time}, ${location}, ${managerId}, ${employeeIds}, ${JSON.stringify(employeePay)})
       RETURNING *
     `;
 
@@ -290,6 +297,52 @@ app.get("/api/shows/:id", authenticate, async (req, res) => {
   }
 
   return res.json({ show: await decorateShow(show) });
+});
+
+app.patch("/api/shows/:id", authenticate, requireRole("admin"), async (req, res) => {
+  try {
+    const showResult = await sql`SELECT * FROM shows WHERE id = ${req.params.id}`;
+    const show = showResult[0];
+
+    if (!show) {
+      return res.status(404).json({ message: "Show not found" });
+    }
+
+    const date = req.body.date !== undefined ? String(req.body.date).trim() : (show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date);
+    const time = req.body.time !== undefined ? String(req.body.time).trim() : show.time;
+    const location = req.body.location !== undefined ? String(req.body.location).trim() : show.location;
+    const managerId = req.body.manager_id !== undefined ? Number(req.body.manager_id) : show.manager_id;
+    const employeeIds = req.body.employee_ids !== undefined
+      ? [...new Set((req.body.employee_ids || []).map(Number))]
+      : show.employee_ids;
+    const employeePay = req.body.employee_pay !== undefined
+      ? req.body.employee_pay
+      : (show.employee_pay || {});
+
+    if (req.body.manager_id !== undefined) {
+      const manager = await byId(managerId);
+      if (!manager || manager.role !== "manager") {
+        return res.status(400).json({ message: "A valid manager is required" });
+      }
+    }
+
+    const [updatedShow] = await sql`
+      UPDATE shows
+      SET date = ${date},
+          time = ${time},
+          location = ${location},
+          manager_id = ${managerId},
+          employee_ids = ${employeeIds},
+          employee_pay = ${JSON.stringify(employeePay)}
+      WHERE id = ${req.params.id}
+      RETURNING *
+    `;
+
+    return res.json({ show: await decorateShow(updatedShow) });
+  } catch (error) {
+    console.error("Show update error:", error);
+    return res.status(500).json({ message: error.message || "Failed to update show" });
+  }
 });
 
 app.post("/api/attendance", authenticate, requireRole("employee"), async (req, res) => {
@@ -390,21 +443,31 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin"), async
 
   const summaryByEmployee = allUsers
     .filter((user) => user.role === "employee")
-    .map((user) => ({
-      "Artist Name": user.name,
-      Username: user.username,
-      "Assigned Shows": allShows.filter((show) => show.employee_ids.includes(user.id)).length,
-      "Attendance Marked": allAttendance.filter((entry) => entry.user_id === user.id).length,
-      "Approved Shows": allAttendance.filter(
-        (entry) => entry.user_id === user.id && entry.approval_status === "approved"
-      ).length,
-      "Pending Approval": allAttendance.filter(
-        (entry) => entry.user_id === user.id && entry.approval_status === "pending"
-      ).length,
-      Rejected: allAttendance.filter(
-        (entry) => entry.user_id === user.id && entry.approval_status === "rejected"
-      ).length
-    }));
+    .map((user) => {
+      const totalPay = allShows.reduce((sum, show) => {
+        if (!show.employee_ids.includes(user.id)) return sum;
+        const payMap = show.employee_pay || {};
+        const pay = payMap[String(user.id)];
+        return sum + (pay != null ? Number(pay) : 0);
+      }, 0);
+
+      return {
+        "Artist Name": user.name,
+        Username: user.username,
+        "Assigned Shows": allShows.filter((show) => show.employee_ids.includes(user.id)).length,
+        "Total Pay (₹)": totalPay || "",
+        "Attendance Marked": allAttendance.filter((entry) => entry.user_id === user.id).length,
+        "Approved Shows": allAttendance.filter(
+          (entry) => entry.user_id === user.id && entry.approval_status === "approved"
+        ).length,
+        "Pending Approval": allAttendance.filter(
+          (entry) => entry.user_id === user.id && entry.approval_status === "pending"
+        ).length,
+        Rejected: allAttendance.filter(
+          (entry) => entry.user_id === user.id && entry.approval_status === "rejected"
+        ).length
+      };
+    });
 
   const summaryByManager = allUsers
     .filter((user) => user.role === "manager")
@@ -440,9 +503,9 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin"), async
 
   const buffer = await writeXlsxFile([
     toWorkbookSheet("Attendance Ledger", rows, [
-      24, 28, 14, 12, 30, 16, 22, 18, 18, 24, 24
+      24, 28, 14, 12, 30, 16, 22, 14, 18, 18, 24, 24
     ]),
-    toWorkbookSheet("Artist Totals", summaryByEmployee, [24, 28, 16, 18, 16, 18, 12]),
+    toWorkbookSheet("Artist Totals", summaryByEmployee, [24, 28, 16, 16, 18, 16, 18, 12]),
     toWorkbookSheet("Manager Totals", summaryByManager, [24, 28, 16, 16, 16]),
     toWorkbookSheet("Show Summary", showSummary, [16, 14, 12, 30, 22, 16, 18, 12, 12, 12])
   ], {
