@@ -20,7 +20,8 @@ import {
   ChartBar,
   X,
   CheckCircle,
-  XCircle
+  XCircle,
+  Trash
 } from "@phosphor-icons/react";
 import "./styles.css";
 
@@ -396,6 +397,26 @@ function AdminView({ token, user }) {
   const employees = useMemo(() => users.filter((u) => u.role === "employee"), [users]);
   const [selectedShow, setSelectedShow] = useState(null);
 
+  const deleteUser = async (targetId, targetName) => {
+    if (!window.confirm(`Are you sure you want to delete ${targetName}? All their attendance records will be removed.`)) return;
+    try {
+      await api(`/users/${targetId}`, { token, method: "DELETE" });
+      refresh();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const deleteShow = async (targetId, targetLocation) => {
+    if (!window.confirm(`Are you sure you want to delete the show at ${targetLocation} (${targetId})?`)) return;
+    try {
+      await api(`/shows/${targetId}`, { token, method: "DELETE" });
+      refresh();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   if (loading) return <DashboardSkeleton />;
 
   return (
@@ -411,13 +432,24 @@ function AdminView({ token, user }) {
           copy={`${users.length} people in SUNGGEET`}
           empty="Add your first team member from the form above."
         >
-          {users.map((user) => (
-            <div className="admin-row" key={user.id}>
-              <div>
-                <h1 className="text-2xl font-bold">{user.name}</h1>
-                <p className="text-sm text-slate-400">{user.username}</p>
+          {users.map((u) => (
+            <div className="admin-row group" key={u.id}>
+              <div className="min-w-0">
+                <h1 className="text-lg font-bold text-white truncate">{u.name}</h1>
+                <p className="text-sm text-slate-400 truncate">{u.username}</p>
               </div>
-              <StatusBadge status={user.role} />
+              <div className="flex items-center gap-3">
+                <StatusBadge status={u.role} />
+                {user.role === "admin" && u.id !== user.id && (
+                  <button
+                    onClick={() => deleteUser(u.id, u.name)}
+                    className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-400 opacity-0 transition-opacity hover:bg-rose-500/20 group-hover:opacity-100"
+                    title="Delete user"
+                  >
+                    <Trash size={16} />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </AdminList>
@@ -428,27 +460,43 @@ function AdminView({ token, user }) {
           empty="Create a show and it will appear here."
         >
           {shows.map((show) => (
-            <button
-              className="admin-row w-full text-left transition-all hover:bg-white/[0.04] hover:border-indigo-400/30 group cursor-pointer"
-              key={show.id}
-              onClick={() => setSelectedShow(show)}
-            >
-              <div className="min-w-0">
-                <p className="truncate font-medium text-white">{show.location}</p>
-                <p className="text-sm text-slate-400">
-                  {formatDate(show.date)} at {formatTime(show.time)}
-                </p>
-              </div>
+            <div className="admin-row group w-full" key={show.id}>
+              <button
+                className="flex-1 text-left min-w-0 transition-all cursor-pointer"
+                onClick={() => setSelectedShow(show)}
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-white">{show.location}</p>
+                  <p className="text-sm text-slate-400">
+                    {formatDate(show.date)} at {formatTime(show.time)}
+                  </p>
+                </div>
+              </button>
               <div className="flex items-center gap-3">
-                <div className="text-right text-sm text-slate-400">
+                <div className="text-right text-sm text-slate-400 hidden sm:block">
                   <p>{show.manager.name}</p>
                   <p>{show.employees.length} singers</p>
                 </div>
-                <div className="grid size-8 place-items-center rounded-lg bg-white/[0.04] text-slate-400 opacity-0 transition-opacity group-hover:opacity-100">
-                  <PencilSimple size={16} />
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => setSelectedShow(show)}
+                    className="grid size-8 place-items-center rounded-lg bg-white/[0.04] text-slate-400 opacity-0 transition-opacity hover:bg-white/[0.08] group-hover:opacity-100"
+                    title="Edit show"
+                  >
+                    <PencilSimple size={16} />
+                  </button>
+                  {user.role === "admin" && (
+                    <button
+                      onClick={() => deleteShow(show.id, show.location)}
+                      className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-400 opacity-0 transition-opacity hover:bg-rose-500/20 group-hover:opacity-100"
+                      title="Delete show"
+                    >
+                      <Trash size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
-            </button>
+            </div>
           ))}
         </AdminList>
       </section>

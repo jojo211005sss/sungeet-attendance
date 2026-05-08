@@ -239,6 +239,36 @@ app.post("/api/users", authenticate, requireRole("admin", "superior"), async (re
   }
 });
 
+app.delete("/api/users/:id", authenticate, requireRole("admin"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (id === req.user.id) {
+      return res.status(400).json({ message: "You cannot delete your own account" });
+    }
+
+    // Delete attendance records first
+    await sql`DELETE FROM attendance WHERE user_id = ${id} OR reviewed_by = ${id}`;
+    // Delete daily activity
+    await sql`DELETE FROM daily_activity WHERE user_id = ${id}`;
+    // Remove from shows employee_ids
+    await sql`
+      UPDATE shows 
+      SET employee_ids = array_remove(employee_ids, ${id})
+      WHERE ${id} = ANY(employee_ids)
+    `;
+    // If they were a manager, nullify manager_id
+    await sql`UPDATE shows SET manager_id = NULL WHERE manager_id = ${id}`;
+    
+    await sql`DELETE FROM users WHERE id = ${id}`;
+    
+    const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
+    res.json({ users: allUsers.map(publicUser) });
+  } catch (error) {
+    console.error("User deletion error:", error);
+    res.status(500).json({ message: error.message || "Failed to delete user" });
+  }
+});
+
 app.get("/api/shows", authenticate, async (req, res) => {
   const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
   const visibleShows = await Promise.all(
@@ -346,6 +376,25 @@ app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), asyn
   } catch (error) {
     console.error("Show update error:", error);
     return res.status(500).json({ message: error.message || "Failed to update show" });
+  }
+});
+
+app.delete("/api/shows/:id", authenticate, requireRole("admin"), async (req, res) => {
+  try {
+    const id = req.params.id;
+    // Delete attendance records first
+    await sql`DELETE FROM attendance WHERE show_id = ${id}`;
+    // Delete the show
+    await sql`DELETE FROM shows WHERE id = ${id}`;
+    
+    const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
+    const visibleShows = await Promise.all(
+      allShows.filter((show) => canAccessShow(req.user, show)).map(decorateShow)
+    );
+    res.json({ shows: visibleShows });
+  } catch (error) {
+    console.error("Show deletion error:", error);
+    res.status(500).json({ message: error.message || "Failed to delete show" });
   }
 });
 
