@@ -32,7 +32,7 @@ const byId = async (id) => {
 
 const normalizeUsername =  (username)  => String(username || "").trim().toLowerCase();
 
-const isValidRole = (role) => ["employee", "manager", "admin"].includes(role);
+const isValidRole = (role) => ["employee", "manager", "admin", "superior"].includes(role);
 
 const decorateShow = async (show) => {
   const manager = await byId(show.manager_id);
@@ -97,7 +97,7 @@ const requireRole = (...roles) => (req, res, next) => {
 };
 
 const canAccessShow = (user, show) => {
-  if (user.role === "admin") return true;
+  if (user.role === "admin" || user.role === "superior") return true;
   if (user.role === "manager") return show.manager_id === user.id;
   return show.employee_ids.includes(user.id);
 };
@@ -199,12 +199,12 @@ app.get("/api/auth/me", authenticate, async (req, res) => {
   res.json({ user: publicUser(req.user), stats: await getStats(req.user) });
 });
 
-app.get("/api/users", authenticate, requireRole("admin"), async (_req, res) => {
+app.get("/api/users", authenticate, requireRole("admin", "superior"), async (_req, res) => {
   const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
   res.json({ users: allUsers.map(publicUser) });
 });
 
-app.post("/api/users", authenticate, requireRole("admin"), async (req, res) => {
+app.post("/api/users", authenticate, requireRole("admin", "superior"), async (req, res) => {
   try {
     const name = String(req.body.name || "").trim();
     const username = normalizeUsername(req.body.username);
@@ -213,6 +213,10 @@ app.post("/api/users", authenticate, requireRole("admin"), async (req, res) => {
 
     if (!name || !username || !password || !isValidRole(role)) {
       return res.status(400).json({ message: "Name, username, password, and valid role are required" });
+    }
+
+    if (req.user.role === "superior" && role === "superior") {
+      return res.status(403).json({ message: "Superiors cannot create other superiors" });
     }
 
     const existingUser = (await sql`SELECT id FROM users WHERE username = ${username}`)[0];
@@ -243,7 +247,7 @@ app.get("/api/shows", authenticate, async (req, res) => {
   res.json({ shows: visibleShows });
 });
 
-app.post("/api/shows", authenticate, requireRole("admin"), async (req, res) => {
+app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (req, res) => {
   try {
     const date = String(req.body.date || "").trim();
     const time = String(req.body.time || "").trim();
@@ -299,7 +303,7 @@ app.get("/api/shows/:id", authenticate, async (req, res) => {
   return res.json({ show: await decorateShow(show) });
 });
 
-app.patch("/api/shows/:id", authenticate, requireRole("admin"), async (req, res) => {
+app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), async (req, res) => {
   try {
     const showResult = await sql`SELECT * FROM shows WHERE id = ${req.params.id}`;
     const show = showResult[0];
@@ -371,7 +375,7 @@ app.post("/api/attendance", authenticate, requireRole("employee"), async (req, r
   return res.status(201).json({ attendance: entry, show: await decorateShow(show) });
 });
 
-app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "admin"), async (req, res) => {
+app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "admin", "superior"), async (req, res) => {
   const { approval_status } = req.body;
   const entryResult = await sql`SELECT * FROM attendance WHERE id = ${Number(req.params.id)}`;
   const entry = entryResult[0];
@@ -391,8 +395,8 @@ app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "ad
     return res.status(403).json({ message: "Managers can only review their own shows" });
   }
 
-  if (entry.approval_status !== "pending" && req.user.role !== "admin") {
-    return res.status(409).json({ message: "Only an admin can edit a finalized approval" });
+  if (entry.approval_status !== "pending" && req.user.role !== "admin" && req.user.role !== "superior") {
+    return res.status(409).json({ message: "Only an admin or superior can edit a finalized approval" });
   }
 
   const [updatedEntry] = await sql`
@@ -435,7 +439,7 @@ app.get("/api/profile", authenticate, async (req, res) => {
   res.json({ stats: await getStats(req.user), activity: userAttendance });
 });
 
-app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin"), async (_req, res) => {
+app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "superior"), async (_req, res) => {
   const rows = await attendanceLedgerRows();
   const allUsers = await sql`SELECT * FROM users`;
   const allShows = await sql`SELECT * FROM shows`;

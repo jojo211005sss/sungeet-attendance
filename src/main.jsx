@@ -29,7 +29,8 @@ const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "/api" :
 const demoAccounts = {
   employee: { username: "aarav@sunggeet.com", password: "password123" },
   manager: { username: "kabir@sunggeet.com", password: "password123" },
-  admin: { username: "admin@sunggeet.com", password: "password123" }
+  admin: { username: "admin@sunggeet.com", password: "password123" },
+  superior: { username: "superior@sunggeet.com", password: "password123" }
 };
 
 function App() {
@@ -84,8 +85,8 @@ function App() {
       {view === "dashboard" && <Dashboard token={token} user={user} />}
       {view === "shows" && <ShowsView token={token} user={user} />}
       {view === "profile" && <ProfileView token={token} user={user} />}
-      {view === "admin" && user.role === "admin" && <AdminView token={token} />}
-      {view === "data" && user.role === "admin" && <DataView token={token} />}
+      {view === "admin" && (user.role === "admin" || user.role === "superior") && <AdminView token={token} user={user} />}
+      {view === "data" && (user.role === "admin" || user.role === "superior") && <DataView token={token} />}
       {view === "checkin" && <DailyCheckInView token={token} user={user} />}
     </Shell>
   );
@@ -180,8 +181,8 @@ function LoginScreen({ onLogin }) {
             <p className="mt-2 text-sm text-slate-400">Use a demo role to enter the matching dashboard.</p>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-1">
-            {["employee", "manager", "admin"].map((item) => (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-1">
+            {["employee", "manager", "admin", "superior"].map((item) => (
               <button
                 className={`rounded-lg px-3 py-2 text-sm capitalize transition ${
                   role === item ? "bg-indigoSoft text-white" : "text-slate-400 hover:text-white"
@@ -244,7 +245,7 @@ function Shell({ children, user, view, setView, mobileOpen, setMobileOpen, onLog
     { id: "shows", label: "Shows", icon: CalendarBlank },
     { id: "checkin", label: "Daily Check-in", icon: CheckCircle },
     { id: "profile", label: "Profile", icon: UserCircle },
-    ...(user.role === "admin" ? [
+    ...(user.role === "admin" || user.role === "superior" ? [
       { id: "admin", label: "Admin", icon: GearSix },
       { id: "data", label: "Data", icon: ChartBar }
     ] : [])
@@ -416,10 +417,10 @@ function ProfileView({ token, user }) {
   );
 }
 
-function AdminView({ token }) {
+function AdminView({ token, user }) {
   const { users, shows, loading, refresh } = useAdminData(token);
-  const managers = useMemo(() => users.filter((user) => user.role === "manager"), [users]);
-  const employees = useMemo(() => users.filter((user) => user.role === "employee"), [users]);
+  const managers = useMemo(() => users.filter((u) => u.role === "manager"), [users]);
+  const employees = useMemo(() => users.filter((u) => u.role === "employee"), [users]);
   const [selectedShow, setSelectedShow] = useState(null);
 
   if (loading) return <DashboardSkeleton />;
@@ -427,7 +428,7 @@ function AdminView({ token }) {
   return (
     <div className="space-y-7">
       <section className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
-        <MemberForm token={token} onCreated={refresh} />
+        <MemberForm token={token} onCreated={refresh} currentUser={user} />
         <ShowForm token={token} managers={managers} employees={employees} onCreated={refresh} />
       </section>
 
@@ -970,7 +971,7 @@ function DailyCheckInView({ token, user }) {
   );
 }
 
-function MemberForm({ token, onSuccess }) {
+function MemberForm({ token, onSuccess, currentUser }) {
   const [form, setForm] = useState({
     name: "",
     username: "",
@@ -1035,6 +1036,9 @@ function MemberForm({ token, onSuccess }) {
             <option value="employee">Employee singer</option>
             <option value="manager">Manager</option>
             <option value="admin">Admin</option>
+            {currentUser?.role === "admin" && (
+              <option value="superior">Superior</option>
+            )}
           </select>
         </label>
       </div>

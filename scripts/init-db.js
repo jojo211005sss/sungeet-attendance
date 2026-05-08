@@ -18,7 +18,7 @@ async function init() {
         name TEXT NOT NULL,
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
-        role TEXT NOT NULL CHECK (role IN ('employee', 'manager', 'admin'))
+        role TEXT NOT NULL CHECK (role IN ('employee', 'manager', 'admin', 'superior'))
       )
     `;
 
