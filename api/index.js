@@ -7,7 +7,11 @@ import writeXlsxFile from "write-excel-file/node";
 import { Buffer } from "node:buffer";
 import { neon } from "@neondatabase/serverless";
 
+if (!process.env.DATABASE_URL) {
+  throw new Error("CRITICAL: DATABASE_URL is not set. Please add it to your Vercel Environment Variables.");
+}
 const sql = neon(process.env.DATABASE_URL);
+
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -35,32 +39,45 @@ const normalizeUsername =  (username)  => String(username || "").trim().toLowerC
 const isValidRole = (role) => ["employee", "manager", "admin", "superior"].includes(role);
 
 const decorateShow = async (show) => {
-  const manager = await byId(show.manager_id);
-  const employeeResults = await sql`SELECT * FROM users WHERE id = ANY(${show.employee_ids})`;
-  const attendanceResults = await sql`
-    SELECT a.*, u.name as employee_name, u.username as employee_username, u.role as employee_role,
-           r.name as reviewer_name, r.username as reviewer_username, r.role as reviewer_role
-    FROM attendance a
-    JOIN users u ON a.user_id = u.id
-    LEFT JOIN users r ON a.reviewed_by = r.id
-    WHERE a.show_id = ${show.id}
-  `;
+  try {
+    const manager = await byId(show.manager_id);
+    const employeeResults = await sql`SELECT * FROM users WHERE id = ANY(${show.employee_ids})`;
+    const attendanceResults = await sql`
+      SELECT a.*, u.name as employee_name, u.username as employee_username, u.role as employee_role,
+             r.name as reviewer_name, r.username as reviewer_username, r.role as reviewer_role
+      FROM attendance a
+      JOIN users u ON a.user_id = u.id
+      LEFT JOIN users r ON a.reviewed_by = r.id
+      WHERE a.show_id = ${show.id}
+    `;
 
-  const payMap = show.employee_pay || {};
+    const payMap = show.employee_pay || {};
 
-  return {
-    ...show,
-    date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date,
-    employee_pay: payMap,
-    manager: publicUser(manager),
-    employees: employeeResults.map((emp) => ({ ...publicUser(emp), pay: payMap[String(emp.id)] ?? null })),
-    attendance: attendanceResults.map((entry) => ({
-      ...entry,
-      employee: { id: entry.user_id, name: entry.employee_name, username: entry.employee_username, role: entry.employee_role },
-      reviewer: entry.reviewed_by ? { id: entry.reviewed_by, name: entry.reviewer_name, username: entry.reviewer_username, role: entry.reviewer_role } : null
-    }))
-  };
+    return {
+      ...show,
+      date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date,
+      employee_pay: payMap,
+      manager: manager ? publicUser(manager) : { name: "Unknown", role: "manager" },
+      employees: employeeResults.map((emp) => ({ ...publicUser(emp), pay: payMap[String(emp.id)] ?? null })),
+      attendance: attendanceResults.map((entry) => ({
+        ...entry,
+        employee: { id: entry.user_id, name: entry.employee_name, username: entry.employee_username, role: entry.employee_role },
+        reviewer: entry.reviewed_by ? { id: entry.reviewed_by, name: entry.reviewer_name, username: entry.reviewer_username, role: entry.reviewer_role } : null
+      }))
+    };
+  } catch (error) {
+    console.error(`Error decorating show ${show.id}:`, error);
+    // Return a bare-minimum show object instead of crashing
+    return {
+      ...show,
+      date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date,
+      manager: { name: "Error Loading", role: "manager" },
+      employees: [],
+      attendance: []
+    };
+  }
 };
+
 
 const signToken = (user) =>
   jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: "12h" });
@@ -270,12 +287,62 @@ app.delete("/api/users/:id", authenticate, requireRole("admin"), async (req, res
 });
 
 app.get("/api/shows", authenticate, async (req, res) => {
-  const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
-  const visibleShows = await Promise.all(
-    allShows.filter((show) => canAccessShow(req.user, show)).map(decorateShow)
-  );
-  res.json({ shows: visibleShows });
+  try {
+    const allShowsRaw = await sql`SELECT * FROM shows ORDER BY date ASC`;
+    const visibleShowsRaw = allShowsRaw.filter((show) => canAccessShow(req.user, show));
+
+    if (visibleShowsRaw.length === 0) {
+      return res.json({ shows: [] });
+    }
+
+    // Bulk fetch all required data
+    const allManagerIds = [...new Set(visibleShowsRaw.map(s => s.manager_id).filter(Boolean))];
+    const allEmployeeIds = [...new Set(visibleShowsRaw.flatMap(s => s.employee_ids))];
+    const allShowIds = visibleShowsRaw.map(s => s.id);
+
+    const [managers, employees, attendance] = await Promise.all([
+      allManagerIds.length ? sql`SELECT * FROM users WHERE id = ANY(${allManagerIds})` : [],
+      allEmployeeIds.length ? sql`SELECT * FROM users WHERE id = ANY(${allEmployeeIds})` : [],
+      sql`
+        SELECT a.*, u.name as employee_name, u.username as employee_username, u.role as employee_role,
+               r.name as reviewer_name, r.username as reviewer_username, r.role as reviewer_role
+        FROM attendance a
+        JOIN users u ON a.user_id = u.id
+        LEFT JOIN users r ON a.reviewed_by = r.id
+        WHERE a.show_id = ANY(${allShowIds})
+      `
+    ]);
+
+    const userMap = Object.fromEntries([...managers, ...employees].map(u => [u.id, publicUser(u)]));
+
+    const visibleShows = visibleShowsRaw.map(show => {
+      const payMap = show.employee_pay || {};
+      const showAttendance = attendance.filter(a => a.show_id === show.id);
+      
+      return {
+        ...show,
+        date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date,
+        employee_pay: payMap,
+        manager: userMap[show.manager_id] || { name: "Unknown", role: "manager" },
+        employees: show.employee_ids.map(id => ({ 
+          ...(userMap[id] || { name: "Unknown", role: "employee" }), 
+          pay: payMap[String(id)] ?? null 
+        })),
+        attendance: showAttendance.map(entry => ({
+          ...entry,
+          employee: { id: entry.user_id, name: entry.employee_name, username: entry.employee_username, role: entry.employee_role },
+          reviewer: entry.reviewed_by ? { id: entry.reviewed_by, name: entry.reviewer_name, username: entry.reviewer_username, role: entry.reviewer_role } : null
+        }))
+      };
+    });
+
+    res.json({ shows: visibleShows });
+  } catch (error) {
+    console.error("Error fetching shows:", error);
+    res.status(500).json({ message: "Failed to load shows" });
+  }
 });
+
 
 app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (req, res) => {
   try {
@@ -461,32 +528,44 @@ app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "ad
 });
 
 app.get("/api/profile", authenticate, async (req, res) => {
-  const attendanceQuery = req.user.role === "employee" 
-    ? sql`SELECT a.*, s.id as show_id FROM attendance a JOIN shows s ON a.show_id = s.id WHERE a.user_id = ${req.user.id}`
-    : sql`SELECT a.*, s.id as show_id FROM attendance a JOIN shows s ON a.show_id = s.id`;
-  
-  const allAttendance = await attendanceQuery;
-  const allShowsRaw = await sql`SELECT * FROM shows`;
-  const allShows = allShowsRaw.map(s => ({
-    ...s,
-    date: s.date instanceof Date ? s.date.toISOString().split("T")[0] : s.date
-  }));
+  try {
+    const attendanceQuery = req.user.role === "employee" 
+      ? sql`SELECT a.*, s.id as show_id FROM attendance a JOIN shows s ON a.show_id = s.id WHERE a.user_id = ${req.user.id}`
+      : sql`SELECT a.*, s.id as show_id FROM attendance a JOIN shows s ON a.show_id = s.id`;
+    
+    const [allAttendance, allShowsRaw, stats] = await Promise.all([
+      attendanceQuery,
+      sql`SELECT * FROM shows`,
+      getStats(req.user)
+    ]);
 
-  const userAttendance = await Promise.all(
-    allAttendance
-      .filter((entry) => {
-        const show = allShows.find((candidate) => candidate.id === entry.show_id);
-        return canAccessShow(req.user, show);
-      })
-      .map(async (entry) => ({
-        ...entry,
-        show: allShows.find((show) => show.id === entry.show_id),
-        employee: publicUser(await byId(entry.user_id))
-      }))
-  );
+    const allShows = allShowsRaw.map(s => ({
+      ...s,
+      date: s.date instanceof Date ? s.date.toISOString().split("T")[0] : s.date
+    }));
 
-  res.json({ stats: await getStats(req.user), activity: userAttendance });
+    const filteredAttendance = allAttendance.filter((entry) => {
+      const show = allShows.find((candidate) => candidate.id === entry.show_id);
+      return canAccessShow(req.user, show);
+    });
+
+    const allUserIds = [...new Set(filteredAttendance.map(a => a.user_id))];
+    const users = allUserIds.length ? await sql`SELECT * FROM users WHERE id = ANY(${allUserIds})` : [];
+    const userMap = Object.fromEntries(users.map(u => [u.id, publicUser(u)]));
+
+    const userActivity = filteredAttendance.map((entry) => ({
+      ...entry,
+      show: allShows.find((show) => show.id === entry.show_id),
+      employee: userMap[entry.user_id] || { name: "Unknown", role: "employee" }
+    }));
+
+    res.json({ stats, activity: userActivity });
+  } catch (error) {
+    console.error("Error fetching profile:", error);
+    res.status(500).json({ message: "Failed to load profile data" });
+  }
 });
+
 
 app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "superior"), async (_req, res) => {
   const rows = await attendanceLedgerRows();

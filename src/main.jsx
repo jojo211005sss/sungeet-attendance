@@ -1619,12 +1619,19 @@ function useWorkspaceData(token) {
 
   const refresh = useCallback(async () => {
     setState((current) => ({ ...current, loading: true }));
-    const [showsData, profileData] = await Promise.all([
-      api("/shows", { token }),
-      api("/profile", { token })
-    ]);
-    setState({ shows: showsData.shows, profile: profileData, loading: false });
+    try {
+      const [showsData, profileData] = await Promise.all([
+        api("/shows", { token }),
+        api("/profile", { token })
+      ]);
+      setState({ shows: showsData.shows, profile: profileData, loading: false });
+    } catch (err) {
+      console.error("Data fetch error:", err);
+      setState((current) => ({ ...current, loading: false }));
+      alert("Failed to load workspace data: " + err.message);
+    }
   }, [token]);
+
 
   useEffect(() => {
     refresh();
@@ -1638,12 +1645,19 @@ function useAdminData(token) {
 
   const refresh = useCallback(async () => {
     setState((current) => ({ ...current, loading: true }));
-    const [usersData, showsData] = await Promise.all([
-      api("/users", { token }),
-      api("/shows", { token })
-    ]);
-    setState({ users: usersData.users, shows: showsData.shows, loading: false });
+    try {
+      const [usersData, showsData] = await Promise.all([
+        api("/users", { token }),
+        api("/shows", { token })
+      ]);
+      setState({ users: usersData.users, shows: showsData.shows, loading: false });
+    } catch (err) {
+      console.error("Admin data fetch error:", err);
+      setState((current) => ({ ...current, loading: false }));
+      alert("Failed to load admin data: " + err.message);
+    }
   }, [token]);
+
 
   useEffect(() => {
     refresh();
@@ -1653,22 +1667,37 @@ function useAdminData(token) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`${API_URL}${path}`, {
-    method: options.method || "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {})
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Request failed" }));
-    throw new Error(error.message || "Request failed");
+  try {
+    const response = await fetch(`${API_URL}${path}`, {
+      method: options.method || "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {})
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: "Request failed" }));
+      throw new Error(error.message || "Request failed");
+    }
+
+    return response.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      throw new Error("Request timed out. The server is taking too long to respond.");
+    }
+    throw err;
   }
-
-  return response.json();
 }
+
 
 function groupByDate(shows) {
   return shows.reduce((groups, show) => {
