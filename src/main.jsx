@@ -1329,10 +1329,17 @@ function StatsGrid({ stats, role }) {
 
 function EmployeeShows({ shows, token, onChanged }) {
   const [selectedShow, setSelectedShow] = useState(null);
-  const grouped = useMemo(() => groupByDate(shows), [shows]);
+  const [selectedMonth, setSelectedMonth] = useState(() => shows[0]?.date.slice(0, 7) || "");
+  
+  const filteredShows = useMemo(() => 
+    selectedMonth ? shows.filter(s => s.date.startsWith(selectedMonth)) : shows
+  , [shows, selectedMonth]);
+
+  const grouped = useMemo(() => groupByDate(filteredShows), [filteredShows]);
 
   return (
     <>
+      <MonthFilter shows={shows} selectedMonth={selectedMonth} onSelect={setSelectedMonth} />
       <section className="space-y-6">
         {Object.keys(grouped).length === 0 ? (
           <EmptyState title="No assigned shows" copy="Your show schedule will appear here when a manager assigns you." />
@@ -1365,25 +1372,70 @@ function EmployeeShows({ shows, token, onChanged }) {
 }
 
 function ManagerShows({ shows, token, role, onChanged, expanded = false }) {
-  const [activeShowId, setActiveShowId] = useState(expanded ? shows[0]?.id : null);
-  const activeShow = shows.find((show) => show.id === activeShowId);
+  const [selectedMonth, setSelectedMonth] = useState(() => shows[0]?.date.slice(0, 7) || "");
+  const [showCloneModal, setShowCloneModal] = useState(false);
+  
+  const filteredShows = useMemo(() => 
+    selectedMonth ? shows.filter(s => s.date.startsWith(selectedMonth)) : shows
+  , [shows, selectedMonth]);
+
+  const [activeShowId, setActiveShowId] = useState(expanded ? filteredShows[0]?.id : null);
+  const activeShow = filteredShows.find((show) => show.id === activeShowId);
+
+  useEffect(() => {
+    if (expanded && filteredShows.length > 0 && (!activeShowId || !filteredShows.find(s => s.id === activeShowId))) {
+      setActiveShowId(filteredShows[0].id);
+    }
+  }, [selectedMonth, filteredShows, expanded, activeShowId]);
 
   return (
-    <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-      <div className="space-y-3">
-        <h2 className="section-title">{(role === "admin" || role === "superior") ? "All shows" : "Assigned shows"}</h2>
-        {shows.map((show) => (
-          <ShowCard
-            key={show.id}
-            show={show}
-            compact
-            active={activeShowId === show.id}
-            onClick={() => setActiveShowId(show.id)}
-          />
-        ))}
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <MonthFilter shows={shows} selectedMonth={selectedMonth} onSelect={setSelectedMonth} />
+        {(role === "admin" || role === "superior") && filteredShows.length > 0 && (
+          <button 
+            onClick={() => setShowCloneModal(true)}
+            className="flex items-center gap-2 rounded-full border border-white/5 bg-white/[0.04] px-4 py-1.5 text-xs font-medium text-slate-400 transition-all hover:bg-white/[0.08] hover:text-white sm:text-sm"
+          >
+            <Copy size={16} />
+            <span className="hidden sm:inline">Copy Month</span>
+          </button>
+        )}
       </div>
-      <ApprovalPanel show={activeShow} token={token} onChanged={onChanged} />
-    </section>
+      <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="space-y-3">
+          <h2 className="section-title">{(role === "admin" || role === "superior") ? "All shows" : "Assigned shows"}</h2>
+          {filteredShows.length === 0 ? (
+            <EmptyState title="No shows this month" copy="Select another month or check back later." />
+          ) : (
+            filteredShows.map((show) => (
+              <ShowCard
+                key={show.id}
+                show={show}
+                compact
+                active={activeShowId === show.id}
+                onClick={() => setActiveShowId(show.id)}
+              />
+            ))
+          )}
+        </div>
+        <ApprovalPanel show={activeShow} token={token} onChanged={onChanged} />
+      </section>
+
+      {showCloneModal && (
+        <CopyScheduleModal
+          shows={filteredShows}
+          sourceMonth={selectedMonth}
+          token={token}
+          onClose={() => setShowCloneModal(false)}
+          onDone={(newMonth) => {
+            setShowCloneModal(false);
+            onChanged(); // Refresh global data
+            setSelectedMonth(newMonth); // Switch to the new month
+          }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -1552,6 +1604,101 @@ function ApprovalPanel({ show, token, onChanged }) {
   );
 }
 
+function CopyScheduleModal({ shows, sourceMonth, token, onClose, onDone }) {
+  const [targetMonth, setTargetMonth] = useState("");
+  const [isCloning, setIsCloning] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: shows.length });
+  const [error, setError] = useState("");
+
+  const clone = async () => {
+    if (!targetMonth) {
+      setError("Please select a target month");
+      return;
+    }
+    
+    if (targetMonth === sourceMonth) {
+      setError("Target month must be different from source month");
+      return;
+    }
+
+    setIsCloning(true);
+    setError("");
+    
+    try {
+      for (let i = 0; i < shows.length; i++) {
+        const show = shows[i];
+        setProgress({ current: i + 1, total: shows.length });
+        
+        // Calculate new date: same day of month
+        const day = show.date.slice(8, 10);
+        const newDate = `${targetMonth}-${day}`;
+        
+        await api("/shows", {
+          token,
+          method: "POST",
+          body: {
+            date: newDate,
+            time: show.time,
+            location: show.location,
+            manager_id: show.manager.id,
+            employee_ids: show.employees.map(e => e.id),
+            employee_pay: show.employee_pay
+          }
+        });
+      }
+      onDone(targetMonth);
+    } catch (err) {
+      setError(`Failed to clone: ${err.message}`);
+      setIsCloning(false);
+    }
+  };
+
+  const [year, month] = sourceMonth.split("-");
+  const sourceLabel = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(new Date(parseInt(year), parseInt(month) - 1, 1));
+
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-[1.25rem] border border-white/10 bg-[#111827] p-6 shadow-lift">
+        <h2 className="text-xl font-semibold text-white">Copy monthly schedule</h2>
+        <p className="mt-2 text-sm text-slate-400">
+          This will copy all {shows.length} shows from <strong>{sourceLabel}</strong> to a new month.
+        </p>
+
+        {!isCloning ? (
+          <div className="mt-6 space-y-4">
+            <label>
+              <span className="mb-2 block text-sm text-slate-300">Target month</span>
+              <input
+                type="month"
+                className="field"
+                value={targetMonth}
+                onChange={(e) => setTargetMonth(e.target.value)}
+              />
+            </label>
+            {error && <p className="text-sm text-rose-400">{error}</p>}
+            <div className="flex justify-end gap-3 pt-2">
+              <button className="ghost-button" onClick={onClose}>Cancel</button>
+              <button className="primary-button" onClick={clone}>Copy Schedule</button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-8 space-y-4">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-white/5">
+              <div 
+                className="h-full bg-indigoSoft transition-all duration-300" 
+                style={{ width: `${(progress.current / progress.total) * 100}%` }}
+              />
+            </div>
+            <p className="text-center text-sm text-slate-300">
+              Cloning shows: {progress.current} of {progress.total}...
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ConfirmAttendanceModal({ show, token, onClose, onDone }) {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -1629,6 +1776,39 @@ function StatusBadge({ status }) {
     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${tone}`}>
       {status}
     </span>
+  );
+}
+
+function MonthFilter({ shows, selectedMonth, onSelect }) {
+  const months = useMemo(() => {
+    const unique = [...new Set(shows.map((s) => s.date.slice(0, 7)))];
+    return unique.sort().reverse();
+  }, [shows]);
+
+  if (months.length <= 1) return null;
+
+  return (
+    <div className="mb-6 flex flex-wrap gap-2 overflow-x-auto pb-2 scrollbar-hide">
+      {months.map((m) => {
+        const [year, month] = m.split("-");
+        const d = new Date(parseInt(year), parseInt(month) - 1, 1);
+        const label = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(d);
+        const isActive = selectedMonth === m;
+        return (
+          <button
+            key={m}
+            onClick={() => onSelect(m)}
+            className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
+              isActive 
+                ? "bg-indigoSoft text-white shadow-lift" 
+                : "bg-white/[0.04] text-slate-400 hover:bg-white/[0.08] hover:text-white border border-white/5"
+            }`}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
