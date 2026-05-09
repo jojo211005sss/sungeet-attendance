@@ -97,9 +97,11 @@ function App() {
   if (!token || !user) {
     return (
       <LoginScreen
-        onLogin={(t, u) => {
-          setToken(t);
-          setUser(u);
+        onLogin={({ nextToken, nextUser }) => {
+          localStorage.setItem("sunggeet-token", nextToken);
+          localStorage.setItem("sunggeet-user", JSON.stringify(nextUser));
+          setToken(nextToken);
+          setUser(nextUser);
         }}
       />
     );
