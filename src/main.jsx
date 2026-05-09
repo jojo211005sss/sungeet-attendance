@@ -1644,8 +1644,8 @@ function CopyScheduleModal({ shows, sourceMonth, token, onClose, onDone }) {
             date: newDate,
             time: show.time,
             location: show.location,
-            manager_id: show.manager.id,
-            employee_ids: show.employees.map(e => e.id),
+            manager_id: show.manager_id,
+            employee_ids: show.employee_ids,
             employee_pay: show.employee_pay
           }
         });
@@ -1658,7 +1658,20 @@ function CopyScheduleModal({ shows, sourceMonth, token, onClose, onDone }) {
   };
 
   const [year, month] = sourceMonth.split("-");
-  const sourceLabel = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(new Date(parseInt(year), parseInt(month) - 1, 1));
+  const d = new Date(parseInt(year), parseInt(month) - 1, 1);
+  const sourceLabel = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(d);
+
+  // Generate next 12 months for target selection
+  const nextMonths = useMemo(() => {
+    const options = [];
+    for (let i = 1; i <= 12; i++) {
+      const date = new Date(parseInt(year), parseInt(month) - 1 + i, 1);
+      const val = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const label = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(date);
+      options.push({ val, label });
+    }
+    return options;
+  }, [year, month]);
 
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm">
@@ -1672,14 +1685,18 @@ function CopyScheduleModal({ shows, sourceMonth, token, onClose, onDone }) {
           <div className="mt-6 space-y-4">
             <label>
               <span className="mb-2 block text-sm text-slate-300">Target month</span>
-              <input
-                type="month"
-                className="field"
+              <select
+                className="field appearance-none"
                 value={targetMonth}
                 onChange={(e) => setTargetMonth(e.target.value)}
-              />
+              >
+                <option value="">Select a month...</option>
+                {nextMonths.map(m => (
+                  <option key={m.val} value={m.val}>{m.label}</option>
+                ))}
+              </select>
             </label>
-            {error && <p className="text-sm text-rose-400">{error}</p>}
+            {error && <p className="mt-2 text-sm text-rose-400">{error}</p>}
             <div className="flex justify-end gap-3 pt-2">
               <button className="ghost-button" onClick={onClose}>Cancel</button>
               <button className="primary-button" onClick={clone}>Copy Schedule</button>

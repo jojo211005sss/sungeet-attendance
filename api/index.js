@@ -349,10 +349,10 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
     const date = String(req.body.date || "").trim();
     const time = String(req.body.time || "").trim();
     const location = String(req.body.location || "").trim();
-    const managerId = Number(req.body.manager_id);
+    const managerId = req.body.manager_id ? Number(req.body.manager_id) : null;
     const employeeIds = [...new Set((req.body.employee_ids || []).map(Number))];
     const employeePay = req.body.employee_pay || {};
-    const manager = await byId(managerId);
+    const manager = managerId ? await byId(managerId) : null;
 
     if (!date || !time || !location || !manager || manager.role !== "manager") {
       return res.status(400).json({ message: "Date, time, location, and a valid manager are required" });
