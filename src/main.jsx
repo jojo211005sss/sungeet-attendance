@@ -21,7 +21,8 @@ import {
   X,
   CheckCircle,
   XCircle,
-  Trash
+  Trash,
+  Copy
 } from "@phosphor-icons/react";
 import "./styles.css";
 
@@ -87,63 +88,59 @@ function DataProvider({ children, token, user }) {
 
 
 function App() {
-  const [token, setToken] = useState(() => localStorage.getItem("sunggeet-token"));
-  const [user, setUser] = useState(null);
-  const [view, setView] = useState("dashboard");
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [loading, setLoading] = useState(Boolean(token));
+  const [token, setToken] = useState(() => localStorage.getItem("sunggeet-token") || "");
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem("sunggeet-user");
+    return saved ? JSON.parse(saved) : null;
+  });
 
-  useEffect(() => {
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-
-    api("/auth/me", { token })
-      .then((data) => setUser(data.user))
-      .catch(() => {
-        localStorage.removeItem("sunggeet-token");
-        setToken(null);
-      })
-      .finally(() => setLoading(false));
-  }, [token]);
-
-  const handleLogin = ({ nextToken, nextUser }) => {
-    localStorage.setItem("sunggeet-token", nextToken);
-    setToken(nextToken);
-    setUser(nextUser);
-    setView("dashboard");
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem("sunggeet-token");
-    setToken(null);
-    setUser(null);
-    setView("dashboard");
-  };
-
-  if (loading) return <LoadingScreen />;
-
-  if (!token || !user) return <LoginScreen onLogin={handleLogin} />;
+  if (!token || !user) {
+    return (
+      <LoginScreen
+        onLogin={(t, u) => {
+          setToken(t);
+          setUser(u);
+        }}
+      />
+    );
+  }
 
   return (
     <DataProvider token={token} user={user}>
-      <Shell
-        user={user}
-        view={view}
-        setView={setView}
-        mobileOpen={mobileOpen}
-        setMobileOpen={setMobileOpen}
-        onLogout={handleLogout}
-      >
-        {view === "dashboard" && <Dashboard token={token} user={user} />}
-        {view === "shows" && <ShowsView token={token} user={user} />}
-        {view === "profile" && <ProfileView token={token} user={user} />}
-        {view === "admin" && (user.role === "admin" || user.role === "superior") && <AdminView token={token} user={user} />}
-        {view === "data" && (user.role === "admin" || user.role === "superior") && <DataView token={token} />}
-        {view === "checkin" && <DailyCheckInView token={token} user={user} />}
-      </Shell>
+      <AuthenticatedApp token={token} user={user} setToken={setToken} setUser={setUser} />
     </DataProvider>
+  );
+}
+
+function AuthenticatedApp({ token, user, setToken, setUser }) {
+  const [view, setView] = useState("dashboard");
+  const { loading, refresh } = useContext(DataContext);
+
+  if (loading) return <DashboardSkeleton />;
+
+  return (
+    <Shell
+      user={user}
+      view={view}
+      onViewChange={setView}
+      onLogout={() => {
+        localStorage.removeItem("sunggeet-token");
+        localStorage.removeItem("sunggeet-user");
+        setToken("");
+        setUser(null);
+      }}
+    >
+      {view === "dashboard" && <Dashboard token={token} user={user} />}
+      {view === "shows" && (
+        <ShowsView token={token} user={user} onShowsChanged={refresh} />
+      )}
+      {view === "profile" && <ProfileView user={user} />}
+      {view === "data" && <DataView token={token} />}
+      {view === "members" && <MembersView token={token} currentUser={user} />}
+      {view === "admin_shows" && (
+        <AdminShowsView token={token} user={user} onShowsChanged={refresh} />
+      )}
+    </Shell>
   );
 }
 
