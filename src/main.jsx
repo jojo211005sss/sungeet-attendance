@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   CalendarBlank,
@@ -26,6 +26,63 @@ import {
 import "./styles.css";
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "/api" : `http://${window.location.hostname}:4000/api`);
+
+const DataContext = createContext();
+
+function DataProvider({ children, token, user }) {
+  const [state, setState] = useState({
+    shows: [],
+    profile: null,
+    users: [],
+    activity: { status: null, summary: null },
+    loading: true,
+    initialLoadDone: false
+  });
+
+  const refresh = useCallback(async (silent = false) => {
+    if (!silent) setState(s => ({ ...s, loading: true }));
+    try {
+      const endpoints = [
+        api("/shows", { token }),
+        api("/profile", { token }),
+        api("/activity/today", { token })
+      ];
+      
+      // Only fetch users if admin/superior
+      const isAdmin = user.role === "admin" || user.role === "superior";
+      if (isAdmin) {
+        endpoints.push(api("/users", { token }));
+      }
+      
+      const results = await Promise.all(endpoints);
+      
+      setState({
+        shows: results[0].shows,
+        profile: results[1],
+        activity: { status: results[2].status, summary: results[2].summary },
+        users: isAdmin ? results[3].users : [],
+        loading: false,
+        initialLoadDone: true
+      });
+    } catch (err) {
+      console.error("Data refresh error:", err);
+      setState(s => ({ ...s, loading: false }));
+    }
+  }, [token, user?.role]);
+
+  useEffect(() => {
+    if (token && user) {
+      refresh();
+    }
+  }, [token, user, refresh]);
+
+  const value = useMemo(() => ({
+    ...state,
+    refresh
+  }), [state, refresh]);
+
+  return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
+}
 
 
 
@@ -70,21 +127,23 @@ function App() {
   if (!token || !user) return <LoginScreen onLogin={handleLogin} />;
 
   return (
-    <Shell
-      user={user}
-      view={view}
-      setView={setView}
-      mobileOpen={mobileOpen}
-      setMobileOpen={setMobileOpen}
-      onLogout={handleLogout}
-    >
-      {view === "dashboard" && <Dashboard token={token} user={user} />}
-      {view === "shows" && <ShowsView token={token} user={user} />}
-      {view === "profile" && <ProfileView token={token} user={user} />}
-      {view === "admin" && (user.role === "admin" || user.role === "superior") && <AdminView token={token} user={user} />}
-      {view === "data" && (user.role === "admin" || user.role === "superior") && <DataView token={token} />}
-      {view === "checkin" && <DailyCheckInView token={token} user={user} />}
-    </Shell>
+    <DataProvider token={token} user={user}>
+      <Shell
+        user={user}
+        view={view}
+        setView={setView}
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
+        onLogout={handleLogout}
+      >
+        {view === "dashboard" && <Dashboard token={token} user={user} />}
+        {view === "shows" && <ShowsView token={token} user={user} />}
+        {view === "profile" && <ProfileView token={token} user={user} />}
+        {view === "admin" && (user.role === "admin" || user.role === "superior") && <AdminView token={token} user={user} />}
+        {view === "data" && (user.role === "admin" || user.role === "superior") && <DataView token={token} />}
+        {view === "checkin" && <DailyCheckInView token={token} user={user} />}
+      </Shell>
+    </DataProvider>
   );
 }
 
@@ -322,7 +381,7 @@ function MobileNav({ items, view, setView }) {
 }
 
 function Dashboard({ token, user }) {
-  const { shows, profile, loading, refresh } = useWorkspaceData(token);
+  const { shows, profile, loading, refresh } = useWorkspaceData();
 
   if (loading) return <DashboardSkeleton />;
 
@@ -341,7 +400,7 @@ function Dashboard({ token, user }) {
 }
 
 function ShowsView({ token, user }) {
-  const { shows, loading, refresh } = useWorkspaceData(token);
+  const { shows, loading, refresh } = useWorkspaceData();
 
   if (loading) return <DashboardSkeleton />;
 
@@ -353,7 +412,7 @@ function ShowsView({ token, user }) {
 }
 
 function ProfileView({ token, user }) {
-  const { profile, loading } = useWorkspaceData(token);
+  const { profile, loading } = useWorkspaceData();
 
   if (loading) return <DashboardSkeleton />;
 
@@ -392,7 +451,7 @@ function ProfileView({ token, user }) {
 }
 
 function AdminView({ token, user }) {
-  const { users, shows, loading, refresh } = useAdminData(token);
+  const { users, shows, loading, refresh } = useAdminData();
   const managers = useMemo(() => users.filter((u) => u.role === "manager"), [users]);
   const employees = useMemo(() => users.filter((u) => u.role === "employee"), [users]);
   const [selectedShow, setSelectedShow] = useState(null);
@@ -742,7 +801,7 @@ function ShowDetailModal({ show, token, allEmployees, managers, onClose, onSaved
 }
 
 function DataView({ token }) {
-  const { users, shows, loading } = useAdminData(token);
+  const { users, shows, loading } = useAdminData();
   const [selectedMonth, setSelectedMonth] = useState("");
 
   const employees = useMemo(() => users.filter((u) => u.role === "employee"), [users]);
@@ -851,27 +910,10 @@ function DataView({ token }) {
   );
 }
 
-function DailyCheckInView({ token, user }) {
-  const [status, setStatus] = useState(null);
-  const [summary, setSummary] = useState(null);
-  const [loading, setLoading] = useState(true);
+function DailyCheckInView({ token }) {
+  const { activity, loading, refresh } = useWorkspaceData();
+  const { status, summary } = activity;
   const [submitting, setSubmitting] = useState(false);
-
-  const fetchData = useCallback(async () => {
-    try {
-      const data = await api("/activity/today", { token });
-      setStatus(data.status);
-      setSummary(data.summary);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
 
   const updateStatus = async (nextStatus) => {
     setSubmitting(true);
@@ -881,8 +923,8 @@ function DailyCheckInView({ token, user }) {
         method: "POST",
         body: { status: nextStatus }
       });
-      setStatus(nextStatus);
-      fetchData();
+      // Silent refresh to update global state without full-screen loading
+      refresh(true);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -1614,56 +1656,17 @@ function DashboardSkeleton() {
   );
 }
 
-function useWorkspaceData(token) {
-  const [state, setState] = useState({ shows: [], profile: null, loading: true });
-
-  const refresh = useCallback(async () => {
-    setState((current) => ({ ...current, loading: true }));
-    try {
-      const [showsData, profileData] = await Promise.all([
-        api("/shows", { token }),
-        api("/profile", { token })
-      ]);
-      setState({ shows: showsData.shows, profile: profileData, loading: false });
-    } catch (err) {
-      console.error("Data fetch error:", err);
-      setState((current) => ({ ...current, loading: false }));
-      alert("Failed to load workspace data: " + err.message);
-    }
-  }, [token]);
-
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  return { ...state, refresh };
+function useWorkspaceData() {
+  const context = useContext(DataContext);
+  if (!context) throw new Error("useWorkspaceData must be used within DataProvider");
+  return context;
 }
 
-function useAdminData(token) {
-  const [state, setState] = useState({ users: [], shows: [], loading: true });
 
-  const refresh = useCallback(async () => {
-    setState((current) => ({ ...current, loading: true }));
-    try {
-      const [usersData, showsData] = await Promise.all([
-        api("/users", { token }),
-        api("/shows", { token })
-      ]);
-      setState({ users: usersData.users, shows: showsData.shows, loading: false });
-    } catch (err) {
-      console.error("Admin data fetch error:", err);
-      setState((current) => ({ ...current, loading: false }));
-      alert("Failed to load admin data: " + err.message);
-    }
-  }, [token]);
-
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  return { ...state, refresh };
+function useAdminData() {
+  const context = useContext(DataContext);
+  if (!context) throw new Error("useAdminData must be used within DataProvider");
+  return context;
 }
 
 async function api(path, options = {}) {
