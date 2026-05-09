@@ -40,6 +40,14 @@ function DataProvider({ children, token, user }) {
     initialLoadDone: false
   });
 
+  const removeUser = useCallback((id) => {
+    setState(s => ({ ...s, users: s.users.filter(u => u.id !== id) }));
+  }, []);
+
+  const removeShow = useCallback((id) => {
+    setState(s => ({ ...s, shows: s.shows.filter(sh => sh.id !== id) }));
+  }, []);
+
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setState(s => ({ ...s, loading: true }));
     try {
@@ -79,8 +87,10 @@ function DataProvider({ children, token, user }) {
 
   const value = useMemo(() => ({
     ...state,
-    refresh
-  }), [state, refresh]);
+    refresh,
+    removeUser,
+    removeShow
+  }), [state, refresh, removeUser, removeShow]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
@@ -455,28 +465,38 @@ function ProfileView({ token, user }) {
 }
 
 function AdminView({ token, user }) {
-  const { users, shows, loading, refresh } = useAdminData();
+  const { users, shows, loading, refresh, removeUser, removeShow } = useAdminData();
   const managers = useMemo(() => users.filter((u) => u.role === "manager"), [users]);
   const employees = useMemo(() => users.filter((u) => u.role === "employee"), [users]);
   const [selectedShow, setSelectedShow] = useState(null);
 
   const deleteUser = async (targetId, targetName) => {
     if (!window.confirm(`Are you sure you want to delete ${targetName}? All their attendance records will be removed.`)) return;
+    
+    // Optimistic update
+    removeUser(targetId);
+    
     try {
       await api(`/users/${targetId}`, { token, method: "DELETE" });
-      refresh();
+      refresh(true); // Silent refresh
     } catch (err) {
       alert(err.message);
+      refresh(); // Full refresh on error to restore state
     }
   };
 
   const deleteShow = async (targetId, targetLocation) => {
     if (!window.confirm(`Are you sure you want to delete the show at ${targetLocation} (${targetId})?`)) return;
+    
+    // Optimistic update
+    removeShow(targetId);
+    
     try {
       await api(`/shows/${targetId}`, { token, method: "DELETE" });
-      refresh();
+      refresh(true); // Silent refresh
     } catch (err) {
       alert(err.message);
+      refresh(); // Full refresh on error to restore state
     }
   };
 
@@ -485,8 +505,8 @@ function AdminView({ token, user }) {
   return (
     <div className="space-y-7">
       <section className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
-        <MemberForm token={token} onCreated={refresh} currentUser={user} />
-        <ShowForm token={token} managers={managers} employees={employees} onCreated={refresh} />
+        <MemberForm token={token} onCreated={() => refresh(true)} currentUser={user} />
+        <ShowForm token={token} managers={managers} employees={employees} onCreated={() => refresh(true)} />
       </section>
 
       <section className="grid gap-5 xl:grid-cols-2">
@@ -1038,7 +1058,7 @@ function DailyCheckInView({ token }) {
   );
 }
 
-function MemberForm({ token, onSuccess, currentUser }) {
+function MemberForm({ token, onCreated, currentUser }) {
   const [form, setForm] = useState({
     name: "",
     username: "",
@@ -1063,7 +1083,7 @@ function MemberForm({ token, onSuccess, currentUser }) {
       });
       setMessage(`${data.user.name} added as ${data.user.role}`);
       setForm({ name: "", username: "", password: "dipfYh-pyfqeb-gyhzu1", role: "employee" });
-      if (onSuccess) onSuccess();
+      if (onCreated) onCreated();
     } catch (requestError) {
       setError(requestError.message);
     } finally {
