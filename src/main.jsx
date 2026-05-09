@@ -116,6 +116,7 @@ function App() {
 
 function AuthenticatedApp({ token, user, setToken, setUser }) {
   const [view, setView] = useState("dashboard");
+  const [mobileOpen, setMobileOpen] = useState(false);
   const { loading, refresh } = useContext(DataContext);
 
   if (loading) return <DashboardSkeleton />;
@@ -124,7 +125,9 @@ function AuthenticatedApp({ token, user, setToken, setUser }) {
     <Shell
       user={user}
       view={view}
-      onViewChange={setView}
+      setView={setView}
+      mobileOpen={mobileOpen}
+      setMobileOpen={setMobileOpen}
       onLogout={() => {
         localStorage.removeItem("sunggeet-token");
         localStorage.removeItem("sunggeet-user");
@@ -136,11 +139,13 @@ function AuthenticatedApp({ token, user, setToken, setUser }) {
       {view === "shows" && (
         <ShowsView token={token} user={user} onShowsChanged={refresh} />
       )}
-      {view === "profile" && <ProfileView user={user} />}
-      {view === "data" && <DataView token={token} />}
-      {view === "members" && <MembersView token={token} currentUser={user} />}
-      {view === "admin_shows" && (
-        <AdminShowsView token={token} user={user} onShowsChanged={refresh} />
+      {view === "checkin" && <DailyCheckInView token={token} user={user} />}
+      {view === "profile" && <ProfileView token={token} user={user} />}
+      {view === "admin" && (user.role === "admin" || user.role === "superior") && (
+        <AdminView token={token} user={user} />
+      )}
+      {view === "data" && (user.role === "admin" || user.role === "superior") && (
+        <DataView token={token} />
       )}
     </Shell>
   );
