@@ -26,7 +26,7 @@ import {
 } from "@phosphor-icons/react";
 import "./styles.css";
 
-const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "/api" : `http://${window.location.hostname}:4000/api`);
+const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? `http://${window.location.hostname}:4000/api` : "/api");
 
 const DataContext = createContext();
 
