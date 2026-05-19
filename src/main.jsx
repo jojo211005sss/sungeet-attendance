@@ -1062,7 +1062,7 @@ function MemberForm({ token, onCreated, currentUser }) {
   const [form, setForm] = useState({
     name: "",
     username: "",
-    password: "dipfYh-pyfqeb-gyhzu1",
+    password: "",
     role: "employee"
   });
   const [message, setMessage] = useState("");
@@ -1082,7 +1082,7 @@ function MemberForm({ token, onCreated, currentUser }) {
         body: form
       });
       setMessage(`${data.user.name} added as ${data.user.role}`);
-      setForm({ name: "", username: "", password: "dipfYh-pyfqeb-gyhzu1", role: "employee" });
+      setForm({ name: "", username: "", password: "", role: "employee" });
       if (onCreated) onCreated();
     } catch (requestError) {
       setError(requestError.message);
@@ -1111,7 +1111,7 @@ function MemberForm({ token, onCreated, currentUser }) {
           label="Temporary password"
           value={form.password}
           onChange={(value) => setForm({ ...form, password: value })}
-          placeholder="dipfYh-pyfqeb-gyhzu1"
+          placeholder="Type a password here"
         />
         <label>
           <span className="mb-2 block text-sm text-slate-300">Role</span>
