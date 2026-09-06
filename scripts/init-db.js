@@ -63,7 +63,18 @@ async function init() {
     console.log("✅ Tables created successfully.");
 
     // 6. Seed Users
-    const hashedPassword = bcrypt.hashSync("dipfYh-pyfqeb-gyhzu1", 10);
+    //
+    // The seed password comes from the environment. It used to be a literal in
+    // this file, which meant it was readable by anyone with access to the repo
+    // and had to be treated as compromised.
+    const seedPassword = process.env.SEED_PASSWORD;
+    if (!seedPassword || seedPassword.length < 12) {
+      throw new Error(
+        "SEED_PASSWORD is not set, or is shorter than 12 characters. " +
+          "Set it in .env before seeding, and change these passwords after first login."
+      );
+    }
+    const hashedPassword = bcrypt.hashSync(seedPassword, 10);
     const dummyUsers = [
       { id: 1, name: "Aarav Mehta", username: "aarav@sunggeet.com", password: hashedPassword, role: "employee" },
       { id: 2, name: "Naina Kapoor", username: "naina@sunggeet.com", password: hashedPassword, role: "employee" },

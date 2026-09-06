@@ -12,13 +12,109 @@ if (!process.env.DATABASE_URL) {
 }
 const sql = neon(process.env.DATABASE_URL);
 
+/**
+ * Second connection, to the PUBLIC WEBSITE's database.
+ *
+ * The two apps deliberately use separate databases: staff records and
+ * employee_pay live here, website content lives there. Nothing in this file
+ * copies pay data across, and the website has no route that could read it.
+ *
+ * Unset simply disables the Website section — the rest of the app is
+ * unaffected.
+ */
+const websiteSql = process.env.WEBSITE_DATABASE_URL
+  ? neon(process.env.WEBSITE_DATABASE_URL)
+  : null;
+
+const requireWebsiteDb = (_req, res, next) => {
+  if (!websiteSql) {
+    return res.status(503).json({
+      message: "WEBSITE_DATABASE_URL is not configured on the server."
+    });
+  }
+  return next();
+};
+
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-const JWT_SECRET = process.env.JWT_SECRET || "local-sunggeet-secret";
 
-app.use(cors());
-app.use(express.json());
+// No fallback. A default secret that ships in a public repo lets anyone forge
+// an admin token, so refuse to boot without a real one.
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  throw new Error(
+    "CRITICAL: JWT_SECRET is not set, or is shorter than 32 characters. " +
+      "Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\""
+  );
+}
+
+// Only the front ends we actually ship may call this API from a browser.
+// ALLOWED_ORIGINS is a comma-separated list, e.g.
+//   https://sungeet-attendance.vercel.app,https://staff.sungsungeet.com
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+if (process.env.NODE_ENV !== "production") {
+  ALLOWED_ORIGINS.push("http://localhost:5173", "http://localhost:4000");
+}
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Same-origin and non-browser callers (curl, server-to-server) send no
+      // Origin header; those are not what CORS is protecting against.
+      if (!origin) return callback(null, true);
+      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+      return callback(new Error("Origin not allowed"));
+    },
+    credentials: true
+  })
+);
+
+app.use(express.json({ limit: "1mb" }));
+
+/**
+ * Throttle repeated failed logins per username+IP.
+ *
+ * In-memory, so each serverless instance keeps its own counter — this raises
+ * the cost of a brute-force attempt but does not eliminate it. For a hard
+ * guarantee move the counter into Postgres or Upstash Redis, or put the route
+ * behind Vercel BotID / WAF rate limiting.
+ */
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 8;
+const loginAttempts = new Map();
+
+const loginKey = (req, username) =>
+  `${req.headers["x-forwarded-for"] || req.ip || "unknown"}:${username}`;
+
+function loginThrottled(key) {
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry || now > entry.resetAt) return false;
+  return entry.count >= LOGIN_MAX_ATTEMPTS;
+}
+
+function recordLoginFailure(key) {
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry || now > entry.resetAt) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return;
+  }
+  entry.count += 1;
+}
+
+// Keep the map from growing without bound on a long-lived instance.
+globalThis.setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of loginAttempts) {
+    if (now > entry.resetAt) loginAttempts.delete(key);
+  }
+}, LOGIN_WINDOW_MS).unref?.();
 
 const today = new Date("2026-03-19T10:30:00.000Z");
 
@@ -191,17 +287,232 @@ const formatTimestamp = (value) =>
     timeZone: "Asia/Kolkata"
   }).format(new Date(value));
 
+/* ==========================================================================
+   WEBSITE
+   Publishes shows from this app onto the public landing page, and manages the
+   teams shown there. Admin and superior only.
+
+   A manager still creates a gig once, in Shows. This section decorates it
+   with the public-facing fields the scheduling form does not capture (city,
+   event type, poster, team) and marks it published. Nothing here creates a
+   second copy of a date.
+   ========================================================================== */
+
+const websiteGuard = [authenticate, requireRole("admin", "superior"), requireWebsiteDb];
+
+// Every upcoming show in THIS database, joined with whatever the website
+// already knows about it.
+app.get("/api/website/shows", ...websiteGuard, async (_req, res) => {
+  try {
+    // to_char, not the raw DATE: the driver hands back a JS Date at local
+    // midnight, and toISOString() then shifts it to the previous day on any
+    // machine ahead of UTC — IST is +5:30, so every gig landed a day early.
+    const shows = await sql`
+      SELECT id, to_char(date, 'YYYY-MM-DD') AS date, time, location,
+             manager_id, employee_ids
+      FROM shows
+      WHERE date >= CURRENT_DATE - INTERVAL '1 day'
+      ORDER BY date ASC, time ASC
+    `;
+
+    const published = await websiteSql`
+      SELECT source_show_id, id, venue, city, event_type, set_name, note,
+             ticket_url, poster_url, team_id, is_published
+      FROM shows
+      WHERE source_show_id IS NOT NULL
+    `;
+    const bySource = new Map(published.map((p) => [String(p.source_show_id), p]));
+
+    const employeeNames = new Map();
+    for (const show of shows) {
+      for (const id of show.employee_ids || []) {
+        if (!employeeNames.has(id)) employeeNames.set(id, null);
+      }
+    }
+    if (employeeNames.size) {
+      const ids = [...employeeNames.keys()];
+      const people = await sql`SELECT id, name FROM users WHERE id = ANY(${ids})`;
+      for (const person of people) employeeNames.set(person.id, person.name);
+    }
+
+    return res.json({
+      shows: shows.map((show) => {
+        return {
+          id: String(show.id),
+          date: show.date,
+          time: show.time,
+          location: show.location,
+          performers: (show.employee_ids || [])
+            .map((id) => employeeNames.get(id))
+            .filter(Boolean),
+          website: bySource.get(String(show.id)) ?? null
+        };
+      })
+    });
+  } catch (error) {
+    console.error("website/shows error:", error);
+    return res.status(500).json({ message: "Could not load website shows" });
+  }
+});
+
+// Publish or update one show on the website.
+app.put("/api/website/shows/:id", ...websiteGuard, async (req, res) => {
+  try {
+    const sourceId = String(req.params.id);
+    const [source] = await sql`
+      SELECT id, to_char(date, 'YYYY-MM-DD') AS date, time, location
+      FROM shows WHERE id = ${sourceId}
+    `;
+    if (!source) return res.status(404).json({ message: "Show not found" });
+
+    const city = String(req.body.city || "").trim();
+    const eventType = String(req.body.event_type || "").trim();
+    if (!city) return res.status(400).json({ message: "City is required" });
+    if (!["cafe", "private", "community"].includes(eventType)) {
+      return res.status(400).json({ message: "Event type must be cafe, private or community" });
+    }
+
+    const venue = String(req.body.venue || source.location || "").trim();
+    const setName = req.body.set_name ? String(req.body.set_name).slice(0, 200) : null;
+    const note = req.body.note ? String(req.body.note).slice(0, 500) : null;
+    const ticketUrl = req.body.ticket_url ? String(req.body.ticket_url).slice(0, 500) : null;
+    const posterUrl = req.body.poster_url ? String(req.body.poster_url).slice(0, 500) : null;
+    const teamId = req.body.team_id ? Number(req.body.team_id) : null;
+    const isPublished = req.body.is_published !== false;
+
+    // The attendance table stores date and time separately; the website wants
+    // one instant. These are Delhi gigs, so Delhi local time is the truth.
+    const startsAt = `${source.date} ${source.time}:00+05:30`;
+
+    const [row] = await websiteSql`
+      INSERT INTO shows (starts_at, venue, city, event_type, team_id, set_name,
+                         note, ticket_url, poster_url, is_published, source_show_id)
+      VALUES (${startsAt}::timestamptz, ${venue}, ${city}, ${eventType}, ${teamId},
+              ${setName}, ${note}, ${ticketUrl}, ${posterUrl}, ${isPublished}, ${sourceId})
+      ON CONFLICT (source_show_id) DO UPDATE SET
+        starts_at = EXCLUDED.starts_at,
+        venue = EXCLUDED.venue,
+        city = EXCLUDED.city,
+        event_type = EXCLUDED.event_type,
+        team_id = EXCLUDED.team_id,
+        set_name = EXCLUDED.set_name,
+        note = EXCLUDED.note,
+        ticket_url = EXCLUDED.ticket_url,
+        poster_url = EXCLUDED.poster_url,
+        is_published = EXCLUDED.is_published,
+        updated_at = now()
+      RETURNING *
+    `;
+
+    return res.json({ website: row });
+  } catch (error) {
+    console.error("website/shows update error:", error);
+    return res.status(500).json({ message: error.message || "Could not publish show" });
+  }
+});
+
+// Remove a show from the website. The gig itself is untouched.
+app.delete("/api/website/shows/:id", ...websiteGuard, async (req, res) => {
+  try {
+    await websiteSql`DELETE FROM shows WHERE source_show_id = ${String(req.params.id)}`;
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("website/shows delete error:", error);
+    return res.status(500).json({ message: "Could not unpublish show" });
+  }
+});
+
+app.get("/api/website/teams", ...websiteGuard, async (_req, res) => {
+  try {
+    const teams = await websiteSql`
+      SELECT t.*,
+        COALESCE((
+          SELECT json_agg(json_build_object('id', m.id, 'name', m.name, 'role', m.role)
+                          ORDER BY m.sort_order)
+          FROM team_members m WHERE m.team_id = t.id
+        ), '[]'::json) AS members
+      FROM teams t
+      ORDER BY t.sort_order ASC, t.name ASC
+    `;
+    return res.json({ teams });
+  } catch (error) {
+    console.error("website/teams error:", error);
+    return res.status(500).json({ message: "Could not load teams" });
+  }
+});
+
+app.put("/api/website/teams/:id", ...websiteGuard, async (req, res) => {
+  try {
+    const name = String(req.body.name || "").trim();
+    if (!name) return res.status(400).json({ message: "Team name is required" });
+
+    const [team] = await websiteSql`
+      UPDATE teams SET
+        name = ${name},
+        tagline = ${req.body.tagline ? String(req.body.tagline).slice(0, 200) : null},
+        blurb = ${req.body.blurb ? String(req.body.blurb).slice(0, 600) : null},
+        photo_url = ${req.body.photo_url ? String(req.body.photo_url).slice(0, 500) : null},
+        video_url = ${req.body.video_url ? String(req.body.video_url).slice(0, 500) : null},
+        is_active = ${req.body.is_active !== false}
+      WHERE id = ${Number(req.params.id)}
+      RETURNING *
+    `;
+    if (!team) return res.status(404).json({ message: "Team not found" });
+    return res.json({ team });
+  } catch (error) {
+    console.error("website/teams update error:", error);
+    return res.status(500).json({ message: "Could not save team" });
+  }
+});
+
+app.post("/api/website/teams", ...websiteGuard, async (req, res) => {
+  try {
+    const name = String(req.body.name || "").trim();
+    if (!name) return res.status(400).json({ message: "Team name is required" });
+
+    const slug = String(req.body.slug || name)
+      .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+
+    const [team] = await websiteSql`
+      INSERT INTO teams (slug, name, tagline, blurb, sort_order)
+      VALUES (${slug}, ${name},
+              ${req.body.tagline ? String(req.body.tagline).slice(0, 200) : null},
+              ${req.body.blurb ? String(req.body.blurb).slice(0, 600) : null},
+              ${Number(req.body.sort_order) || 0})
+      RETURNING *
+    `;
+    return res.status(201).json({ team });
+  } catch (error) {
+    console.error("website/teams create error:", error);
+    const conflict = String(error.message || "").includes("duplicate");
+    return res.status(conflict ? 409 : 500).json({
+      message: conflict ? "A team with that name already exists" : "Could not create team"
+    });
+  }
+});
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, now: new Date().toISOString(), db: "connected" });
 });
 
 app.post("/api/auth/login", async (req, res) => {
   const { username, password, role } = req.body;
-  const normalizedUsername = normalizeUsername (username) ;
+  const normalizedUsername = normalizeUsername(username);
+  const throttleKey = loginKey(req, normalizedUsername);
+
+  if (loginThrottled(throttleKey)) {
+    return res
+      .status(429)
+      .json({ message: "Too many failed attempts. Try again in 15 minutes." });
+  }
+
   const userResults = await sql`SELECT * FROM users WHERE username = ${normalizedUsername}`;
   const user = userResults[0];
 
   if (!user || !(await bcrypt.compare(password, user.password))) {
+    recordLoginFailure(throttleKey);
+    // Same message either way, so the response can't be used to enumerate
+    // which usernames exist.
     return res.status(401).json({ message: "Invalid username or password" });
   }
 

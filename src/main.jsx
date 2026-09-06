@@ -22,7 +22,8 @@ import {
   CheckCircle,
   XCircle,
   Trash,
-  Copy
+  Copy,
+  Globe
 } from "@phosphor-icons/react";
 import "./styles.css";
 
@@ -151,6 +152,9 @@ function AuthenticatedApp({ token, user, setToken, setUser }) {
       )}
       {view === "checkin" && <DailyCheckInView token={token} user={user} />}
       {view === "profile" && <ProfileView token={token} user={user} />}
+      {view === "website" && (user.role === "admin" || user.role === "superior") && (
+        <WebsiteView token={token} />
+      )}
       {view === "admin" && (user.role === "admin" || user.role === "superior") && (
         <AdminView token={token} user={user} />
       )}
@@ -293,6 +297,7 @@ function Shell({ children, user, view, setView, mobileOpen, setMobileOpen, onLog
     { id: "checkin", label: "Daily Check-in", icon: CheckCircle },
     { id: "profile", label: "Profile", icon: UserCircle },
     ...(user.role === "admin" || user.role === "superior" ? [
+      { id: "website", label: "Website", icon: Globe },
       { id: "admin", label: "Admin", icon: GearSix },
       { id: "data", label: "Data", icon: ChartBar }
     ] : [])
@@ -1888,6 +1893,408 @@ function useAdminData() {
   const context = useContext(DataContext);
   if (!context) throw new Error("useAdminData must be used within DataProvider");
   return context;
+}
+
+/* ==========================================================================
+   WEBSITE
+   Controls what the public landing page shows. Two tabs: the calendar of
+   gigs, and the teams.
+
+   Deliberately does NOT create shows. A manager enters a gig once, in Shows;
+   here you add the public-facing fields it doesn't capture and publish it.
+   Two places to type a date is how the two versions drift apart.
+   ========================================================================== */
+
+const EVENT_TYPES = [
+  { value: "cafe", label: "Café" },
+  { value: "private", label: "Private event" },
+  { value: "community", label: "Community / religious" }
+];
+
+function WebsiteView({ token }) {
+  const [tab, setTab] = useState("calendar");
+  const [shows, setShows] = useState([]);
+  const [teams, setTeams] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [showData, teamData] = await Promise.all([
+        api("/website/shows", { token }),
+        api("/website/teams", { token })
+      ]);
+      setShows(showData.shows);
+      setTeams(teamData.teams);
+    } catch (err) {
+      setError(err.message || "Could not load website data");
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <div className="panel"><p className="section-copy">Loading…</p></div>;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="section-title">Website</h1>
+        <p className="section-copy">
+          What the public landing page shows. Changes here go live on the site.
+        </p>
+      </div>
+
+      {error && (
+        <div className="panel border-rose-500/40">
+          <p className="text-sm text-rose-300">{error}</p>
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        {[
+          { id: "calendar", label: "Calendar" },
+          { id: "teams", label: "Teams" }
+        ].map((item) => (
+          <button
+            key={item.id}
+            className={item.id === tab ? "primary-button" : "ghost-button"}
+            onClick={() => setTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "calendar" && (
+        <WebsiteCalendar token={token} shows={shows} teams={teams} onChanged={load} />
+      )}
+      {tab === "teams" && (
+        <WebsiteTeams token={token} teams={teams} onChanged={load} />
+      )}
+    </div>
+  );
+}
+
+function WebsiteCalendar({ token, shows, teams, onChanged }) {
+  const [editing, setEditing] = useState(null);
+
+  if (!shows.length) {
+    return (
+      <div className="panel">
+        <p className="section-copy">
+          No upcoming shows. Create one in <strong>Shows</strong> first — this
+          section publishes gigs, it doesn't create them.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {shows.map((show) => {
+        const live = show.website;
+        return (
+          <div key={show.id} className="panel">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-3">
+                  <p className="font-semibold">{show.location}</p>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${
+                    live?.is_published
+                      ? "bg-emerald-500/15 text-emerald-300"
+                      : "bg-white/10 text-slate-400"
+                  }`}>
+                    {live?.is_published ? "On the website" : "Not published"}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-400 mt-1">
+                  {show.date} · {show.time}
+                  {show.performers.length > 0 && ` · ${show.performers.join(", ")}`}
+                </p>
+                {live && (
+                  <p className="text-sm text-slate-500 mt-1">
+                    {live.city} · {EVENT_TYPES.find((e) => e.value === live.event_type)?.label}
+                    {live.set_name && ` · ${live.set_name}`}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <button className="ghost-button" onClick={() => setEditing(show)}>
+                  <PencilSimple size={16} /> {live ? "Edit" : "Publish"}
+                </button>
+                {live && (
+                  <button
+                    className="ghost-button"
+                    onClick={async () => {
+                      if (!window.confirm(`Remove "${show.location}" from the website? The gig itself stays.`)) return;
+                      await api(`/website/shows/${show.id}`, { token, method: "DELETE" });
+                      onChanged();
+                    }}
+                  >
+                    <Trash size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      {editing && (
+        <PublishShowDialog
+          token={token}
+          show={editing}
+          teams={teams}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); onChanged(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function PublishShowDialog({ token, show, teams, onClose, onSaved }) {
+  const live = show.website || {};
+  const [form, setForm] = useState({
+    venue: live.venue || show.location || "",
+    city: live.city || "",
+    event_type: live.event_type || "cafe",
+    set_name: live.set_name || "",
+    note: live.note || "",
+    ticket_url: live.ticket_url || "",
+    poster_url: live.poster_url || "",
+    team_id: live.team_id || "",
+    is_published: live.is_published !== false
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      await api(`/website/shows/${show.id}`, { token, method: "PUT", body: form });
+      onSaved();
+    } catch (err) {
+      setError(err.message || "Could not save");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4 overflow-y-auto">
+      <div className="panel w-full max-w-lg my-8">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Publish to the website</h2>
+          <button className="icon-button" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <p className="section-copy mt-1">
+          {show.date} · {show.time} — date, time and performers come from the
+          show itself. Change those in <strong>Shows</strong>.
+        </p>
+
+        <div className="mt-5 space-y-4">
+          <label className="field">
+            <span>Venue name shown publicly</span>
+            <input value={form.venue} onChange={set("venue")} placeholder={show.location} />
+          </label>
+
+          <label className="field">
+            <span>City *</span>
+            <input value={form.city} onChange={set("city")} placeholder="New Delhi" />
+          </label>
+
+          <label className="field">
+            <span>Event type *</span>
+            <select value={form.event_type} onChange={set("event_type")}>
+              {EVENT_TYPES.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Team playing</span>
+            <select value={form.team_id} onChange={set("team_id")}>
+              <option value="">— none —</option>
+              {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Set name</span>
+            <input value={form.set_name} onChange={set("set_name")} placeholder="Jazz standards, Sufi second set" />
+          </label>
+
+          <label className="field">
+            <span>Note</span>
+            <input value={form.note} onChange={set("note")} placeholder="Two sets, no cover." />
+          </label>
+
+          <label className="field">
+            <span>Ticket link</span>
+            <input value={form.ticket_url} onChange={set("ticket_url")} placeholder="https://…" />
+          </label>
+
+          <label className="field">
+            <span>Poster image URL</span>
+            <input value={form.poster_url} onChange={set("poster_url")} placeholder="https://…" />
+          </label>
+
+          <label className="flex items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={form.is_published}
+              onChange={(e) => setForm((f) => ({ ...f, is_published: e.target.checked }))}
+            />
+            Visible on the website
+          </label>
+        </div>
+
+        {error && <p className="text-sm text-rose-300 mt-4">{error}</p>}
+
+        <div className="mt-6 flex gap-3">
+          <button className="primary-button" onClick={save} disabled={saving}>
+            <FloppyDisk size={16} /> {saving ? "Saving…" : "Save"}
+          </button>
+          <button className="ghost-button" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WebsiteTeams({ token, teams, onChanged }) {
+  const [editing, setEditing] = useState(null);
+  const [creating, setCreating] = useState(false);
+
+  return (
+    <div className="space-y-3">
+      <button className="primary-button" onClick={() => setCreating(true)}>
+        <Plus size={16} /> Add a team
+      </button>
+
+      {teams.map((team) => (
+        <div key={team.id} className="panel">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="font-semibold">
+                {team.name}
+                {!team.is_active && <span className="ml-2 text-xs text-slate-500">(hidden)</span>}
+              </p>
+              {team.tagline && <p className="text-sm text-slate-400">{team.tagline}</p>}
+              <p className="text-sm text-slate-500 mt-1">
+                {team.members.length
+                  ? team.members.map((m) => `${m.name} (${m.role})`).join(", ")
+                  : "No members listed"}
+              </p>
+            </div>
+            <button className="ghost-button" onClick={() => setEditing(team)}>
+              <PencilSimple size={16} /> Edit
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {(editing || creating) && (
+        <TeamDialog
+          token={token}
+          team={editing}
+          onClose={() => { setEditing(null); setCreating(false); }}
+          onSaved={() => { setEditing(null); setCreating(false); onChanged(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function TeamDialog({ token, team, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: team?.name || "",
+    tagline: team?.tagline || "",
+    blurb: team?.blurb || "",
+    photo_url: team?.photo_url || "",
+    video_url: team?.video_url || "",
+    is_active: team?.is_active !== false
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      if (team) {
+        await api(`/website/teams/${team.id}`, { token, method: "PUT", body: form });
+      } else {
+        await api("/website/teams", { token, method: "POST", body: form });
+      }
+      onSaved();
+    } catch (err) {
+      setError(err.message || "Could not save");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4 overflow-y-auto">
+      <div className="panel w-full max-w-lg my-8">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">{team ? "Edit team" : "Add a team"}</h2>
+          <button className="icon-button" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="mt-5 space-y-4">
+          <label className="field">
+            <span>Name *</span>
+            <input value={form.name} onChange={set("name")} placeholder="The Tuesday Trio" />
+          </label>
+          <label className="field">
+            <span>Tagline</span>
+            <input value={form.tagline} onChange={set("tagline")} placeholder="The open-jam house band" />
+          </label>
+          <label className="field">
+            <span>Blurb</span>
+            <textarea rows={3} value={form.blurb} onChange={set("blurb")} />
+          </label>
+          <label className="field">
+            <span>Photo URL</span>
+            <input value={form.photo_url} onChange={set("photo_url")} placeholder="https://…" />
+          </label>
+          <label className="field">
+            <span>Showreel URL</span>
+            <input value={form.video_url} onChange={set("video_url")} placeholder="https://…" />
+          </label>
+          {team && (
+            <label className="flex items-center gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={form.is_active}
+                onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))}
+              />
+              Show this team on the website
+            </label>
+          )}
+        </div>
+
+        {error && <p className="text-sm text-rose-300 mt-4">{error}</p>}
+
+        <div className="mt-6 flex gap-3">
+          <button className="primary-button" onClick={save} disabled={saving}>
+            <FloppyDisk size={16} /> {saving ? "Saving…" : "Save"}
+          </button>
+          <button className="ghost-button" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 async function api(path, options = {}) {
