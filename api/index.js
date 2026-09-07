@@ -300,58 +300,74 @@ const formatTimestamp = (value) =>
 
 const websiteGuard = [authenticate, requireRole("admin", "superior"), requireWebsiteDb];
 
-// Every upcoming show in THIS database, joined with whatever the website
-// already knows about it.
-app.get("/api/website/shows", ...websiteGuard, async (_req, res) => {
+// Everything the Website section needs, in one request.
+//
+// Deliberately one endpoint and two round trips — one per database — rather
+// than separate /shows and /teams calls. Those made five sequential queries
+// across two Neon projects, and the website's project auto-suspends, so a
+// cold start blew past the client's 8s timeout and the tab just said
+// "Request timed out".
+app.get("/api/website/data", ...websiteGuard, async (_req, res) => {
   try {
-    // to_char, not the raw DATE: the driver hands back a JS Date at local
-    // midnight, and toISOString() then shifts it to the previous day on any
-    // machine ahead of UTC — IST is +5:30, so every gig landed a day early.
+    // Performer names come back with the shows instead of in a second query.
     const shows = await sql`
-      SELECT id, to_char(date, 'YYYY-MM-DD') AS date, time, location,
-             manager_id, employee_ids
-      FROM shows
-      WHERE date >= CURRENT_DATE - INTERVAL '1 day'
-      ORDER BY date ASC, time ASC
+      SELECT s.id,
+             to_char(s.date, 'YYYY-MM-DD') AS date,
+             s.time,
+             s.location,
+             COALESCE((
+               SELECT json_agg(u.name ORDER BY u.name)
+               FROM users u WHERE u.id = ANY(s.employee_ids)
+             ), '[]'::json) AS performers
+      FROM shows s
+      WHERE s.date >= CURRENT_DATE - INTERVAL '1 day'
+      ORDER BY s.date ASC, s.time ASC
     `;
 
-    const published = await websiteSql`
-      SELECT source_show_id, id, venue, city, event_type, set_name, note,
-             ticket_url, poster_url, team_id, is_published
-      FROM shows
-      WHERE source_show_id IS NOT NULL
+    // Published rows and teams in a single hit on the website database.
+    const [site] = await websiteSql`
+      SELECT
+        COALESCE((
+          SELECT json_agg(json_build_object(
+            'source_show_id', p.source_show_id, 'id', p.id, 'venue', p.venue,
+            'city', p.city, 'event_type', p.event_type, 'set_name', p.set_name,
+            'note', p.note, 'ticket_url', p.ticket_url, 'poster_url', p.poster_url,
+            'team_id', p.team_id, 'is_published', p.is_published))
+          FROM shows p WHERE p.source_show_id IS NOT NULL
+        ), '[]'::json) AS published,
+        COALESCE((
+          SELECT json_agg(json_build_object(
+            'id', t.id, 'slug', t.slug, 'name', t.name, 'tagline', t.tagline,
+            'blurb', t.blurb, 'photo_url', t.photo_url, 'video_url', t.video_url,
+            'is_active', t.is_active, 'sort_order', t.sort_order,
+            'members', COALESCE((
+              SELECT json_agg(json_build_object('id', m.id, 'name', m.name, 'role', m.role)
+                              ORDER BY m.sort_order)
+              FROM team_members m WHERE m.team_id = t.id
+            ), '[]'::json))
+            ORDER BY t.sort_order, t.name)
+          FROM teams t
+        ), '[]'::json) AS teams
     `;
-    const bySource = new Map(published.map((p) => [String(p.source_show_id), p]));
 
-    const employeeNames = new Map();
-    for (const show of shows) {
-      for (const id of show.employee_ids || []) {
-        if (!employeeNames.has(id)) employeeNames.set(id, null);
-      }
-    }
-    if (employeeNames.size) {
-      const ids = [...employeeNames.keys()];
-      const people = await sql`SELECT id, name FROM users WHERE id = ANY(${ids})`;
-      for (const person of people) employeeNames.set(person.id, person.name);
-    }
+    const bySource = new Map(
+      (site.published || []).map((p) => [String(p.source_show_id), p])
+    );
 
     return res.json({
-      shows: shows.map((show) => {
-        return {
-          id: String(show.id),
-          date: show.date,
-          time: show.time,
-          location: show.location,
-          performers: (show.employee_ids || [])
-            .map((id) => employeeNames.get(id))
-            .filter(Boolean),
-          website: bySource.get(String(show.id)) ?? null
-        };
-      })
+      shows: shows.map((show) => ({
+        id: String(show.id),
+        date: show.date,
+        time: show.time,
+        location: show.location,
+        performers: show.performers || [],
+        website: bySource.get(String(show.id)) ?? null
+      })),
+      teams: site.teams || []
     });
   } catch (error) {
-    console.error("website/shows error:", error);
-    return res.status(500).json({ message: "Could not load website shows" });
+    console.error("website/data error:", error);
+    return res.status(500).json({ message: "Could not load website data" });
   }
 });
 
@@ -419,25 +435,6 @@ app.delete("/api/website/shows/:id", ...websiteGuard, async (req, res) => {
   } catch (error) {
     console.error("website/shows delete error:", error);
     return res.status(500).json({ message: "Could not unpublish show" });
-  }
-});
-
-app.get("/api/website/teams", ...websiteGuard, async (_req, res) => {
-  try {
-    const teams = await websiteSql`
-      SELECT t.*,
-        COALESCE((
-          SELECT json_agg(json_build_object('id', m.id, 'name', m.name, 'role', m.role)
-                          ORDER BY m.sort_order)
-          FROM team_members m WHERE m.team_id = t.id
-        ), '[]'::json) AS members
-      FROM teams t
-      ORDER BY t.sort_order ASC, t.name ASC
-    `;
-    return res.json({ teams });
-  } catch (error) {
-    console.error("website/teams error:", error);
-    return res.status(500).json({ message: "Could not load teams" });
   }
 });
 

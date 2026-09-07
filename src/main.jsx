@@ -1922,12 +1922,9 @@ function WebsiteView({ token }) {
     setLoading(true);
     setError("");
     try {
-      const [showData, teamData] = await Promise.all([
-        api("/website/shows", { token }),
-        api("/website/teams", { token })
-      ]);
-      setShows(showData.shows);
-      setTeams(teamData.teams);
+      const data = await api("/website/data", { token, timeout: 25000 });
+      setShows(data.shows);
+      setTeams(data.teams);
     } catch (err) {
       setError(err.message || "Could not load website data");
     } finally {
@@ -2299,7 +2296,10 @@ function TeamDialog({ token, team, onClose, onSaved }) {
 
 async function api(path, options = {}) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+  // 8s suits the warm endpoints. Anything touching the website database needs
+  // longer, because that Neon project auto-suspends and a cold start alone can
+  // take several seconds.
+  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 8000);
 
   try {
     const response = await fetch(`${API_URL}${path}`, {
