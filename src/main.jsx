@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   CalendarBlank,
@@ -159,7 +159,7 @@ function AuthenticatedApp({ token, user, setToken, setUser }) {
         <AdminView token={token} user={user} />
       )}
       {view === "data" && (user.role === "admin" || user.role === "superior") && (
-        <DataView token={token} />
+        <DataView />
       )}
     </Shell>
   );
@@ -829,7 +829,7 @@ function ShowDetailModal({ show, token, allEmployees, managers, onClose, onSaved
   );
 }
 
-function DataView({ token }) {
+function DataView() {
   const { users, shows, loading } = useAdminData();
   const [selectedMonth, setSelectedMonth] = useState("");
 
@@ -1951,10 +1951,11 @@ function WebsiteView({ token }) {
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="tab-row flex gap-2">
         {[
           { id: "calendar", label: "Calendar" },
-          { id: "teams", label: "Teams" }
+          { id: "teams", label: "Teams" },
+          { id: "floaters", label: "Floaters" }
         ].map((item) => (
           <button
             key={item.id}
@@ -1972,6 +1973,7 @@ function WebsiteView({ token }) {
       {tab === "teams" && (
         <WebsiteTeams token={token} teams={teams} onChanged={load} />
       )}
+      {tab === "floaters" && <WebsiteFloaters token={token} />}
     </div>
   );
 }
@@ -2139,10 +2141,15 @@ function PublishShowDialog({ token, show, teams, onClose, onSaved }) {
             <input value={form.ticket_url} onChange={set("ticket_url")} placeholder="https://…" />
           </label>
 
-          <label className="field">
-            <span>Poster image URL</span>
-            <input value={form.poster_url} onChange={set("poster_url")} placeholder="https://…" />
-          </label>
+          <MediaUpload
+            token={token}
+            kind="image"
+            label="Poster"
+            hint="Portrait artwork, roughly 3:4. Without one the card falls back to a typographic design."
+            value={null}
+            url={form.poster_url}
+            onChange={({ url }) => setForm((prev) => ({ ...prev, poster_url: url || "" }))}
+          />
 
           <label className="flex items-center gap-3 text-sm">
             <input
@@ -2261,10 +2268,15 @@ function TeamDialog({ token, team, onClose, onSaved }) {
             <span>Blurb</span>
             <textarea rows={3} value={form.blurb} onChange={set("blurb")} />
           </label>
-          <label className="field">
-            <span>Photo URL</span>
-            <input value={form.photo_url} onChange={set("photo_url")} placeholder="https://…" />
-          </label>
+          <MediaUpload
+            token={token}
+            kind="image"
+            label="Team photo"
+            hint="Shown on the team card."
+            value={null}
+            url={form.photo_url}
+            onChange={({ url }) => setForm((prev) => ({ ...prev, photo_url: url || "" }))}
+          />
           <label className="field">
             <span>Showreel URL</span>
             <input value={form.video_url} onChange={set("video_url")} placeholder="https://…" />
@@ -2290,6 +2302,385 @@ function TeamDialog({ token, team, onClose, onSaved }) {
           <button className="ghost-button" onClick={onClose}>Cancel</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   WEBSITE → FLOATERS
+
+   The artist cut-outs that drift around the public landing page and sing when
+   tapped. Add someone, upload their cut-out and a 10-15s clip, and they are
+   live. Everything here is swappable without a deploy, which is the whole
+   point — the shipped ones are placeholders.
+   ========================================================================== */
+
+function WebsiteFloaters({ token }) {
+  const [floaters, setFloaters] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api("/website/floaters", { token, timeout: 25000 });
+      setFloaters(data.floaters || []);
+      setError("");
+    } catch (err) {
+      setError(err.message || "Could not load floaters");
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <div className="panel"><p className="section-copy">Loading…</p></div>;
+
+  if (editing) {
+    return (
+      <FloaterEditor
+        token={token}
+        floater={editing === "new" ? null : editing}
+        nextSort={floaters.length}
+        onClose={() => setEditing(null)}
+        onSaved={() => { setEditing(null); load(); }}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="panel">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Floating artists</h2>
+            <p className="section-copy">
+              These drift around the top of the landing page. Tapping one plays their clip.
+            </p>
+          </div>
+          <button className="primary-button" onClick={() => setEditing("new")}>
+            Add artist
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="panel border-rose-500/40">
+          <p className="text-sm text-rose-300">{error}</p>
+        </div>
+      )}
+
+      {floaters.length === 0 ? (
+        <div className="panel">
+          <p className="section-copy">
+            No artists yet. Add one and they will appear on the landing page.
+          </p>
+        </div>
+      ) : (
+        <div className="floater-grid">
+          {floaters.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              className="floater-card"
+              onClick={() => setEditing(f)}
+            >
+              <div className="floater-thumb">
+                {f.image_id || f.image_url ? (
+                  <img
+                    src={f.image_id ? `${MEDIA_BASE}/api/media/${f.image_id}` : f.image_url}
+                    alt=""
+                  />
+                ) : (
+                  <span>No image</span>
+                )}
+              </div>
+              <div className="floater-meta">
+                <span className="floater-name">{f.name}</span>
+                <span className="floater-role">{f.role || "—"}</span>
+                <span className={f.is_active ? "floater-badge-on" : "floater-badge-off"}>
+                  {f.is_active ? "Live" : "Hidden"}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FloaterEditor({ token, floater, nextSort, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: floater?.name || "",
+    role: floater?.role || "",
+    image_id: floater?.image_id || null,
+    image_url: floater?.image_url || null,
+    audio_id: floater?.audio_id || null,
+    audio_url: floater?.audio_url || null,
+    sort_order: floater?.sort_order ?? nextSort,
+    is_active: floater?.is_active ?? true
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const set = (key) => (event) =>
+    setForm((prev) => ({ ...prev, [key]: event.target.value }));
+
+  async function save() {
+    if (!form.name.trim()) { setError("Give them a name"); return; }
+    setSaving(true);
+    setError("");
+    try {
+      if (floater) {
+        await api(`/website/floaters/${floater.id}`, {
+          token, method: "PUT", body: form, timeout: 25000
+        });
+      } else {
+        await api("/website/floaters", { token, method: "POST", body: form, timeout: 25000 });
+      }
+      onSaved();
+    } catch (err) {
+      setError(err.message || "Could not save");
+      setSaving(false);
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm(`Remove ${form.name} from the landing page?`)) return;
+    setSaving(true);
+    try {
+      await api(`/website/floaters/${floater.id}`, { token, method: "DELETE", timeout: 25000 });
+      onSaved();
+    } catch (err) {
+      setError(err.message || "Could not remove");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="panel space-y-5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold">{floater ? form.name || "Edit artist" : "New artist"}</h2>
+        <button className="ghost-button" onClick={onClose}>Back</button>
+      </div>
+
+      {error && <p className="text-sm text-rose-300">{error}</p>}
+
+      <div className="form-grid">
+        <label className="field-label">
+          <span>Name</span>
+          <input className="field" value={form.name} onChange={set("name")} placeholder="Aditya" />
+        </label>
+        <label className="field-label">
+          <span>Plays</span>
+          <input className="field" value={form.role} onChange={set("role")} placeholder="vocals, guitar" />
+        </label>
+      </div>
+
+      <MediaUpload
+        token={token}
+        kind="image"
+        label="Cut-out"
+        hint="Works best as the artist alone on a transparent background. Any photo works — the background just stays."
+        value={form.image_id}
+        url={form.image_url}
+        onChange={({ id, url }) => setForm((p) => ({ ...p, image_id: id, image_url: url }))}
+      />
+
+      <MediaUpload
+        token={token}
+        kind="audio"
+        label="Clip"
+        hint="10-15 seconds is ideal. Plays when someone taps them."
+        value={form.audio_id}
+        url={form.audio_url}
+        onChange={({ id, url }) => setForm((p) => ({ ...p, audio_id: id, audio_url: url }))}
+      />
+
+      <div className="form-grid">
+        <label className="field-label">
+          <span>Order</span>
+          <input
+            className="field"
+            type="number"
+            value={form.sort_order}
+            onChange={(e) => setForm((p) => ({ ...p, sort_order: Number(e.target.value) }))}
+          />
+        </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={form.is_active}
+            onChange={(e) => setForm((p) => ({ ...p, is_active: e.target.checked }))}
+          />
+          <span>Show on the landing page</span>
+        </label>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <button className="primary-button" onClick={save} disabled={saving}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {floater && (
+          <button className="ghost-button text-rose-300" onClick={remove} disabled={saving}>
+            Remove
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================================
+   MEDIA UPLOAD
+
+   Every image field in this app used to be "paste a URL", which assumed you
+   already had the file hosted somewhere. Nobody does. This picks a file off
+   the device, shrinks it in the browser, and stores it in the website
+   database, so a phone photo becomes a live image in two taps.
+   ========================================================================== */
+
+const MEDIA_BASE = API_URL.replace(/\/api$/, "");
+
+/**
+ * Where to load a stored asset from while editing.
+ *
+ * Uploads are saved against the PUBLIC site's URL shape ("/api/media?id=…"),
+ * because that is what the landing page will request. The admin is a different
+ * origin, so rewrite that to this app's own media route for the preview.
+ * Anything else (a pasted external URL, a file in /public) is used as-is.
+ */
+function resolveMedia(id, url) {
+  if (id) return `${MEDIA_BASE}/api/media/${id}`;
+  if (!url) return "";
+  const match = /^\/api\/media\?id=([0-9a-f-]{36})$/i.exec(url);
+  return match ? `${MEDIA_BASE}/api/media/${match[1]}` : url;
+}
+
+/** The canonical path the public site will fetch an upload from. */
+const publicMediaUrl = (id) => `/api/media?id=${id}`;
+
+/** Downscale and re-encode in the browser so we upload ~100KB, not ~5MB. */
+async function compressImage(file, maxEdge = 1000) {
+  // SVG has no raster size to scale, and re-encoding would rasterise it.
+  if (file.type === "image/svg+xml") return file;
+  const bitmap = await createImageBitmap(file).catch(() => null);
+  if (!bitmap) return file;
+
+  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+  bitmap.close?.();
+
+  // WebP keeps the alpha channel, which matters: artist cut-outs are
+  // transparent PNGs and JPEG would fill the background with black.
+  const blob = await new Promise((resolve) =>
+    canvas.toBlob(resolve, "image/webp", 0.88)
+  );
+  if (!blob || blob.size >= file.size) return file;
+  return new File([blob], file.name.replace(/\.\w+$/, "") + ".webp", { type: "image/webp" });
+}
+
+const fileToBase64 = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.onerror = () => reject(new Error("Could not read that file"));
+    reader.readAsDataURL(file);
+  });
+
+/**
+ * One upload control. `value` is a media id (or null); `url` is the legacy
+ * URL fallback so existing rows keep working.
+ */
+function MediaUpload({ token, kind, value, url, onChange, label, hint }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef(null);
+
+  const preview = resolveMedia(value, url);
+
+  async function handleFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setError("");
+    setBusy(true);
+    try {
+      const prepared = kind === "image" ? await compressImage(file) : file;
+      const data = await fileToBase64(prepared);
+      const result = await api("/website/media", {
+        token,
+        method: "POST",
+        timeout: 45000,
+        body: { kind, mime: prepared.type, filename: prepared.name, data }
+      });
+      onChange({ id: result.id, url: publicMediaUrl(result.id) });
+    } catch (err) {
+      setError(err.message || "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="upload">
+      <div className="upload-head">
+        <span className="upload-label">{label}</span>
+        {preview && (
+          <button
+            type="button"
+            className="upload-clear"
+            onClick={() => onChange({ id: null, url: null })}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+
+      <div className="upload-body">
+        {kind === "image" ? (
+          <div className="upload-thumb">
+            {preview ? <img src={preview} alt="" /> : <span>No image</span>}
+          </div>
+        ) : (
+          <div className="upload-audio">
+            {preview ? (
+              <audio controls src={preview} preload="none" />
+            ) : (
+              <span className="text-xs text-slate-400">No clip</span>
+            )}
+          </div>
+        )}
+
+        <div className="upload-actions">
+          <input
+            ref={inputRef}
+            type="file"
+            accept={kind === "image" ? "image/*" : "audio/*"}
+            onChange={handleFile}
+            hidden
+          />
+          <button
+            type="button"
+            className="ghost-button w-full"
+            disabled={busy}
+            onClick={() => inputRef.current?.click()}
+          >
+            {busy ? "Uploading…" : preview ? "Replace" : `Choose ${kind}`}
+          </button>
+          {hint && <p className="upload-hint">{hint}</p>}
+        </div>
+      </div>
+
+      {error && <p className="upload-error">{error}</p>}
     </div>
   );
 }

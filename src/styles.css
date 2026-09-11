@@ -367,3 +367,297 @@ select.field {
     transform: translateX(100%);
   }
 }
+
+/* ==========================================================================
+   FLOATERS + UPLOAD
+
+   Added with the Website → Floaters section. Mobile-first: everything here
+   stacks by default and only spreads out on wider screens, because most of
+   this app is used on a phone.
+   ========================================================================== */
+
+/* Labelled field wrapper. The app had bare inputs in places, which made forms
+   read as a wall of boxes. */
+.field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: #cbd5e1;
+}
+
+.form-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .form-grid {
+    grid-template-columns: 1fr 1fr;
+    align-items: end;
+  }
+}
+
+.upload {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0.95rem;
+}
+
+.upload-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.upload-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.upload-clear {
+  background: none;
+  border: 0;
+  padding: 0.25rem 0.1rem;
+  font-size: 0.75rem;
+  color: #fca5a5;
+}
+
+.upload-clear:hover {
+  color: #fecaca;
+}
+
+.upload-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+@media (min-width: 520px) {
+  .upload-body {
+    flex-direction: row;
+    align-items: center;
+  }
+  .upload-actions {
+    flex: 1;
+  }
+}
+
+/* Checkerboard so a transparent cut-out reads as transparent rather than
+   looking like it has a dark background baked in. */
+.upload-thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 9rem;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 0.78rem;
+  background-color: rgba(255, 255, 255, 0.04);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.05) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.05) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.05) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.05) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+@media (min-width: 520px) {
+  .upload-thumb {
+    width: 8.5rem;
+    height: 8.5rem;
+  }
+}
+
+.upload-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.upload-audio {
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-audio audio {
+  width: 100%;
+  height: 2.4rem;
+}
+
+.upload-hint {
+  margin: 0.55rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.upload-error {
+  margin: 0.7rem 0 0;
+  font-size: 0.78rem;
+  color: #fca5a5;
+}
+
+.floater-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 700px) {
+  .floater-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1000px) {
+  .floater-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.floater-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.7rem;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.035);
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.floater-card:hover {
+  border-color: rgba(212, 141, 70, 0.45);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.floater-card:active {
+  transform: scale(0.985);
+}
+
+.floater-thumb {
+  display: grid;
+  place-items: center;
+  height: 7.5rem;
+  border-radius: 0.7rem;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 0.72rem;
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.floater-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.floater-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.floater-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floater-role {
+  font-size: 0.74rem;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floater-badge-on,
+.floater-badge-off {
+  align-self: flex-start;
+  margin-top: 0.2rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.floater-badge-on {
+  background: rgba(212, 141, 70, 0.18);
+  color: #f0b97d;
+}
+
+.floater-badge-off {
+  background: rgba(148, 163, 184, 0.16);
+  color: #94a3b8;
+}
+
+/* --------------------------------------------------------------------------
+   Mobile and polish pass
+
+   Most of this app is used on a phone, where the previous layout had targets
+   well under the 44px everyone can actually hit, and forms that overflowed.
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  .primary-button,
+  .ghost-button,
+  .decision-button {
+    min-height: 44px;
+  }
+
+  .field {
+    /* Under 16px iOS zooms the whole page in on focus. */
+    font-size: 16px;
+  }
+
+  .panel {
+    padding: 1rem;
+    border-radius: 1rem;
+  }
+
+  .section-title {
+    font-size: 1.5rem;
+  }
+
+  /* Tab rows scroll instead of wrapping into a ragged stack. */
+  .tab-row {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+    scrollbar-width: none;
+  }
+
+  .tab-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab-row > * {
+    flex: none;
+  }
+}
+
+/* A little depth and warmth: the app was flat slate everywhere, which read as
+   unfinished next to the public site. */
+body {
+  background-image:
+    radial-gradient(70vh 50vh at 12% -10%, rgba(99, 102, 241, 0.10), transparent 70%),
+    radial-gradient(60vh 45vh at 100% 0%, rgba(212, 141, 70, 0.07), transparent 70%);
+  background-attachment: fixed;
+}

@@ -74,7 +74,13 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "1mb" }));
+// 1mb suits every ordinary request. Media uploads are base64 and need much
+// more, so they get their own parser rather than raising the limit globally.
+const jsonSmall = express.json({ limit: "1mb" });
+const jsonUpload = express.json({ limit: "12mb" });
+app.use((req, res, next) =>
+  req.path === "/api/website/media" ? jsonUpload(req, res, next) : jsonSmall(req, res, next)
+);
 
 /**
  * Throttle repeated failed logins per username+IP.
@@ -115,8 +121,6 @@ globalThis.setInterval(() => {
     if (now > entry.resetAt) loginAttempts.delete(key);
   }
 }, LOGIN_WINDOW_MS).unref?.();
-
-const today = new Date("2026-03-19T10:30:00.000Z");
 
 const publicUser = (user) => ({
   id: user.id,
@@ -485,6 +489,140 @@ app.post("/api/website/teams", ...websiteGuard, async (req, res) => {
     return res.status(conflict ? 409 : 500).json({
       message: conflict ? "A team with that name already exists" : "Could not create team"
     });
+  }
+});
+
+/* --------------------------------------------------------------------------
+   FLOATERS + MEDIA
+
+   Floaters are the artist cut-outs that drift around the public landing page
+   and sing when tapped. Before this, images anywhere in the Website section
+   could only be set by pasting a URL, which is unusable for anyone without
+   somewhere to host a file — so uploads land in the website database itself
+   (base64 in `media`) and are served back by id. Assets are small: cut-outs
+   are compressed in the browser before upload and clips run 10-15s.
+   -------------------------------------------------------------------------- */
+
+const MEDIA_MIME = {
+  image: ["image/png", "image/jpeg", "image/webp", "image/gif"],
+  audio: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/mp4", "audio/x-m4a", "audio/aac"]
+};
+// Decoded ceiling. The 12mb body limit above leaves room for base64's 33%.
+const MEDIA_MAX_BYTES = 8 * 1024 * 1024;
+
+app.post("/api/website/media", ...websiteGuard, async (req, res) => {
+  try {
+    const kind = String(req.body?.kind || "");
+    const mime = String(req.body?.mime || "").toLowerCase();
+    const data = String(req.body?.data || "");
+    const filename = req.body?.filename ? String(req.body.filename).slice(0, 200) : null;
+
+    if (!MEDIA_MIME[kind]) return res.status(400).json({ message: "kind must be image or audio" });
+    if (!MEDIA_MIME[kind].includes(mime)) {
+      return res.status(400).json({ message: `That is not a supported ${kind} format` });
+    }
+    if (!data) return res.status(400).json({ message: "No file data" });
+
+    const byteSize = Buffer.byteLength(data, "base64");
+    if (byteSize > MEDIA_MAX_BYTES) {
+      return res.status(413).json({ message: "That file is too large (8MB max)" });
+    }
+
+    const rows = await websiteSql`
+      INSERT INTO media (kind, mime, data, byte_size, filename)
+      VALUES (${kind}, ${mime}, ${data}, ${byteSize}, ${filename})
+      RETURNING id
+    `;
+    res.status(201).json({ id: rows[0].id, byteSize });
+  } catch (error) {
+    console.error("website/media upload error:", error);
+    res.status(500).json({ message: "Could not upload that file" });
+  }
+});
+
+// Serving is deliberately open and uncached-by-auth: these are the same bytes
+// the public site shows. Rows are immutable, so this caches forever.
+app.get("/api/media/:id", requireWebsiteDb, async (req, res) => {
+  try {
+    const rows = await websiteSql`SELECT mime, data FROM media WHERE id = ${String(req.params.id)}`;
+    if (!rows.length) return res.status(404).json({ message: "Not found" });
+    const buf = Buffer.from(rows[0].data, "base64");
+    res.setHeader("Content-Type", rows[0].mime);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.send(buf);
+  } catch (error) {
+    console.error("media fetch error:", error);
+    res.status(500).json({ message: "Could not load that file" });
+  }
+});
+
+app.get("/api/website/floaters", ...websiteGuard, async (_req, res) => {
+  try {
+    const rows = await websiteSql`
+      SELECT id, name, role, image_id, audio_id, image_url, audio_url, sort_order, is_active
+      FROM floaters ORDER BY sort_order ASC, id ASC
+    `;
+    res.json({ floaters: rows });
+  } catch (error) {
+    console.error("website/floaters list error:", error);
+    res.status(500).json({ message: "Could not load floaters" });
+  }
+});
+
+const floaterFields = (body) => ({
+  name: String(body?.name || "").trim(),
+  role: body?.role ? String(body.role).trim() : null,
+  image_id: body?.image_id || null,
+  audio_id: body?.audio_id || null,
+  image_url: body?.image_url ? String(body.image_url).trim() : null,
+  audio_url: body?.audio_url ? String(body.audio_url).trim() : null,
+  sort_order: Number.isFinite(Number(body?.sort_order)) ? Number(body.sort_order) : 0,
+  is_active: body?.is_active !== false
+});
+
+app.post("/api/website/floaters", ...websiteGuard, async (req, res) => {
+  const f = floaterFields(req.body);
+  if (!f.name) return res.status(400).json({ message: "A name is required" });
+  try {
+    const rows = await websiteSql`
+      INSERT INTO floaters (name, role, image_id, audio_id, image_url, audio_url, sort_order, is_active)
+      VALUES (${f.name}, ${f.role}, ${f.image_id}, ${f.audio_id}, ${f.image_url},
+              ${f.audio_url}, ${f.sort_order}, ${f.is_active})
+      RETURNING id
+    `;
+    res.status(201).json({ id: rows[0].id });
+  } catch (error) {
+    console.error("website/floaters create error:", error);
+    res.status(500).json({ message: "Could not add that artist" });
+  }
+});
+
+app.put("/api/website/floaters/:id", ...websiteGuard, async (req, res) => {
+  const f = floaterFields(req.body);
+  if (!f.name) return res.status(400).json({ message: "A name is required" });
+  try {
+    await websiteSql`
+      UPDATE floaters SET
+        name = ${f.name}, role = ${f.role},
+        image_id = ${f.image_id}, audio_id = ${f.audio_id},
+        image_url = ${f.image_url}, audio_url = ${f.audio_url},
+        sort_order = ${f.sort_order}, is_active = ${f.is_active}
+      WHERE id = ${Number(req.params.id)}
+    `;
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("website/floaters update error:", error);
+    res.status(500).json({ message: "Could not save that artist" });
+  }
+});
+
+app.delete("/api/website/floaters/:id", ...websiteGuard, async (req, res) => {
+  try {
+    await websiteSql`DELETE FROM floaters WHERE id = ${Number(req.params.id)}`;
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("website/floaters delete error:", error);
+    res.status(500).json({ message: "Could not remove that artist" });
   }
 });
 

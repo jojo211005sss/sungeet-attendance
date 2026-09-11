@@ -7,3 +7,7 @@ dist
 .env*.local
 .env.bak
 .env*
+
+# local UI preview, not shipped
+public/_preview.html
+public/preview/
