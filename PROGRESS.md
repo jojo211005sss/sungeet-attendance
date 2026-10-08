@@ -29,3 +29,7 @@ Round 3 — image/audio uploads (Website tab), tested end to end incl. the live 
 - Replaced/removed/deleted images and clips are now deleted from the website DB (`pruneMedia`), unless still referenced.
 
 Test data in the DB: TEST Singer One, TEST Singer Two, TEST Manager (password in `.env` as TEST_ACCOUNTS_PASSWORD) and show SGT-0710-01 "TEST Venue Rooftop".
+
+## 2026-10-08 — leaked password + git identity
+- GitGuardian flagged a hard-coded password in the `mock-db-and-show-pay` branch. Removed in `fd8e69c` (demo mode now uses `demo1234`; `init-db.js` requires `SEED_PASSWORD`). No live account uses the old password; it's still in old history (repo is public).
+- Commits had gone out as the boss (Sukhman) because an AI tool set his email with `git config --global` on 2026-09-26. Global identity is back to sarnjot singh; his identity is set only inside the VMB repo.
