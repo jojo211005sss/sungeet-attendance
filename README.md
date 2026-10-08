@@ -1,6 +1,9 @@
 # SUNGGEET Attendance System
 
-Full-stack MVP for singer attendance, manager approvals, admin stats, and Excel export.
+Full-stack app for singer attendance, manager approvals, pay, reports, venues and the public website's content.
+
+**Live:** https://sungeet-attendance.vercel.app  
+**How to use it (step by step, with screenshots):** [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
 
 ## Stack
 
