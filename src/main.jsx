@@ -271,6 +271,46 @@ function LoginScreen({ onLogin }) {
           <button className="primary-button mt-6 w-full" disabled={submitting}>
             {submitting ? "Checking account" : "Enter dashboard"}
           </button>
+
+          {import.meta.env.DEV && (
+          <div className="mt-6 border-t border-white/10 pt-4">
+            <p className="mb-2 text-xs uppercase tracking-wider text-slate-400 font-medium">Quick Test Logins (Click to autofill):</p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setForm({ username: "admin@sunggeet.com", password: "dipfYh-pyfqeb-gyhzu1" })}
+                className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-2 text-left text-indigo-300 hover:bg-indigo-500/20 transition"
+              >
+                <div className="font-semibold text-white">👑 Admin</div>
+                <div className="text-[11px] text-slate-400">Full controls & export</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ username: "kabir@sunggeet.com", password: "dipfYh-pyfqeb-gyhzu1" })}
+                className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-left text-emerald-300 hover:bg-emerald-500/20 transition"
+              >
+                <div className="font-semibold text-white">📋 Manager</div>
+                <div className="text-[11px] text-slate-400">Approvals & shows</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ username: "aarav@sunggeet.com", password: "dipfYh-pyfqeb-gyhzu1" })}
+                className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-left text-amber-300 hover:bg-amber-500/20 transition"
+              >
+                <div className="font-semibold text-white">🎤 Singer (Employee)</div>
+                <div className="text-[11px] text-slate-400">Mark attendance & pay</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ username: "vikram@sunggeet.com", password: "dipfYh-pyfqeb-gyhzu1" })}
+                className="rounded-lg border border-purple-500/30 bg-purple-500/10 p-2 text-left text-purple-300 hover:bg-purple-500/20 transition"
+              >
+                <div className="font-semibold text-white">⭐ Superior</div>
+                <div className="text-[11px] text-slate-400">High-level oversight</div>
+              </button>
+            </div>
+          </div>
+          )}
         </form>
       </section>
     </main>
@@ -563,15 +603,15 @@ function AdminView({ token, user }) {
                 <div className="flex gap-2">
                   <button 
                     onClick={() => setSelectedShow(show)}
-                    className="grid size-8 place-items-center rounded-lg bg-white/[0.04] text-slate-400 opacity-0 transition-opacity hover:bg-white/[0.08] group-hover:opacity-100"
-                    title="Edit show"
+                    className="grid size-8 place-items-center rounded-lg bg-white/[0.08] text-slate-300 transition-colors hover:bg-white/[0.15] hover:text-white"
+                    title="Edit show & fees"
                   >
                     <PencilSimple size={16} />
                   </button>
                   {user.role === "admin" && (
                     <button
                       onClick={() => deleteShow(show.id, show.location)}
-                      className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-400 opacity-0 transition-opacity hover:bg-rose-500/20 group-hover:opacity-100"
+                      className="grid size-8 place-items-center rounded-lg bg-rose-500/15 text-rose-300 transition-colors hover:bg-rose-500/25 hover:text-rose-200"
                       title="Delete show"
                     >
                       <Trash size={16} />
@@ -602,29 +642,34 @@ function AdminView({ token, user }) {
 }
 
 function ShowDetailModal({ show, token, allEmployees, managers, onClose, onSaved }) {
+  const employeeList = allEmployees && allEmployees.length > 0 
+    ? allEmployees 
+    : (show.employees && show.employees.length > 0 ? show.employees : []);
+
+  const managerList = managers && managers.length > 0 
+    ? managers 
+    : (show.manager?.id ? [show.manager] : []);
+
+  const initialManagerId = show.manager?.id || show.manager_id || (managerList[0]?.id ? String(managerList[0].id) : "");
+
   const [form, setForm] = useState({
-    date: show.date,
+    date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date,
     time: show.time,
     location: show.location,
-    manager_id: show.manager.id,
-    employee_ids: show.employees.map((e) => e.id),
+    manager_id: initialManagerId,
+    employee_ids: (show.employees || []).map((e) => e.id),
     employee_pay: show.employee_pay || {}
   });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [expandedId, setExpandedId] = useState(null);
 
   const toggleEmployee = (id) => {
     setForm((current) => {
       const newIds = current.employee_ids.includes(id)
         ? current.employee_ids.filter((eid) => eid !== id)
         : [...current.employee_ids, id];
-      const newPay = { ...current.employee_pay };
-      if (!newIds.includes(id)) {
-        delete newPay[String(id)];
-      }
-      return { ...current, employee_ids: newIds, employee_pay: newPay };
+      return { ...current, employee_ids: newIds };
     });
   };
 
@@ -650,13 +695,13 @@ function ShowDetailModal({ show, token, allEmployees, managers, onClose, onSaved
           date: form.date,
           time: form.time,
           location: form.location,
-          manager_id: Number(form.manager_id),
+          manager_id: form.manager_id ? Number(form.manager_id) : undefined,
           employee_ids: form.employee_ids.map(Number),
           employee_pay: form.employee_pay
         }
       });
-      setMessage("Show updated successfully");
-      setTimeout(() => onSaved(), 600);
+      setMessage("Show and pay updated successfully!");
+      setTimeout(() => onSaved(), 500);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -664,7 +709,10 @@ function ShowDetailModal({ show, token, allEmployees, managers, onClose, onSaved
     }
   };
 
-  const totalPay = Object.values(form.employee_pay).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const totalPay = form.employee_ids.reduce((sum, id) => {
+    const val = form.employee_pay[String(id)];
+    return sum + (Number(val) || 0);
+  }, 0);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm" onClick={onClose}>
@@ -679,8 +727,8 @@ function ShowDetailModal({ show, token, allEmployees, managers, onClose, onSaved
               <PencilSimple size={20} />
             </div>
             <div>
-              <h2 className="text-xl font-semibold tracking-tight text-white">Edit show</h2>
-              <p className="text-sm text-slate-400">{show.id} — Update members and assign pay</p>
+              <h2 className="text-xl font-semibold tracking-tight text-white">Edit show & fees</h2>
+              <p className="text-sm text-slate-400">{show.id} — Set singer fees and schedule</p>
             </div>
           </div>
           <button className="icon-button" onClick={onClose}>
@@ -709,95 +757,91 @@ function ShowDetailModal({ show, token, allEmployees, managers, onClose, onSaved
               onChange={(value) => setForm({ ...form, location: value })}
             />
           </div>
-          <label className="md:col-span-2">
-            <span className="mb-2 block text-sm text-slate-300">Manager</span>
-            <select
-              className="field"
-              value={form.manager_id}
-              onChange={(e) => setForm({ ...form, manager_id: e.target.value })}
-            >
-              {managers.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </label>
+          {managerList.length > 0 && (
+            <label className="md:col-span-2">
+              <span className="mb-2 block text-sm text-slate-300">Manager</span>
+              <select
+                className="field"
+                value={form.manager_id}
+                onChange={(e) => setForm({ ...form, manager_id: e.target.value })}
+              >
+                {managerList.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
 
         {/* Members + Pay */}
         <div className="mt-6">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-medium text-slate-300">Assigned singers & pay</p>
+            <div>
+              <p className="text-sm font-semibold text-slate-200">Performing Singers & Pay (₹)</p>
+              <p className="text-xs text-slate-400">Directly edit each singer's payout amount below</p>
+            </div>
             {totalPay > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-200">
-                <CurrencyInr size={12} weight="bold" />
-                Total: ₹{totalPay.toLocaleString("en-IN")}
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3.5 py-1 text-xs font-semibold text-emerald-300">
+                <CurrencyInr size={14} weight="bold" />
+                Total Show Pay: ₹{totalPay.toLocaleString("en-IN")}
               </span>
             )}
           </div>
+
           <div className="space-y-2">
-            {allEmployees.map((employee) => {
+            {employeeList.map((employee) => {
               const isAssigned = form.employee_ids.includes(employee.id);
-              const isExpanded = expandedId === employee.id && isAssigned;
               const payValue = form.employee_pay[String(employee.id)];
 
               return (
                 <div
                   key={employee.id}
-                  className={`rounded-xl border transition-all ${
+                  className={`rounded-xl border transition-all p-3.5 ${
                     isAssigned
-                      ? "border-indigo-400/20 bg-indigo-500/[0.06]"
+                      ? "border-indigo-400/30 bg-indigo-500/[0.08]"
                       : "border-white/5 bg-white/[0.02]"
                   }`}
                 >
-                  <div className="flex items-center gap-3 p-3">
-                    <input
-                      type="checkbox"
-                      checked={isAssigned}
-                      onChange={() => toggleEmployee(employee.id)}
-                      className="shrink-0"
-                    />
-                    <button
-                      className="flex flex-1 items-center gap-3 min-w-0 text-left"
-                      onClick={() => {
-                        if (isAssigned) {
-                          setExpandedId(isExpanded ? null : employee.id);
-                        }
-                      }}
-                    >
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-slate-300 shrink-0">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <label className="flex items-center gap-3 cursor-pointer min-w-0 flex-1">
+                      <input
+                        type="checkbox"
+                        checked={isAssigned}
+                        onChange={() => toggleEmployee(employee.id)}
+                        className="size-4 shrink-0 rounded border-white/20 bg-slate-800 text-indigo-500 focus:ring-indigo-500"
+                      />
+                      <div className="flex size-9 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-slate-200 shrink-0">
                         {employee.name.charAt(0)}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <span className="block truncate font-medium text-slate-200">{employee.name}</span>
-                        <span className="block text-xs text-slate-500">{employee.username}</span>
+                      <div className="min-w-0">
+                        <span className="block truncate font-medium text-slate-100">{employee.name}</span>
+                        <span className="block text-xs text-slate-400">{employee.username}</span>
                       </div>
-                    </button>
-                    {isAssigned && payValue != null && payValue !== "" && (
-                      <span className="inline-flex items-center gap-1 rounded-lg border border-amber-400/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-200 shrink-0">
-                        ₹{Number(payValue).toLocaleString("en-IN")}
-                      </span>
-                    )}
-                  </div>
+                    </label>
 
-                  {isExpanded && (
-                    <div className="border-t border-white/5 px-3 py-3">
-                      <label className="flex items-center gap-2">
-                        <span className="text-sm text-slate-400 shrink-0">Pay (₹)</span>
-                        <div className="relative flex-1">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">₹</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="100"
-                            className="field pl-7 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            placeholder="0"
-                            value={payValue ?? ""}
-                            onChange={(e) => setPay(employee.id, e.target.value)}
-                          />
-                        </div>
-                      </label>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-medium ${isAssigned ? "text-slate-300" : "text-slate-600"}`}>
+                        Pay (₹):
+                      </span>
+                      <div className="relative w-36">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-semibold">₹</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="100"
+                          disabled={!isAssigned}
+                          className={`field py-1.5 pl-7 pr-3 text-sm font-semibold tracking-wide ${
+                            !isAssigned
+                              ? "opacity-30 cursor-not-allowed bg-slate-900 border-white/5"
+                              : "border-indigo-400/60 bg-slate-900 text-emerald-300 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400"
+                          }`}
+                          placeholder="Amount in ₹"
+                          value={payValue ?? ""}
+                          onChange={(e) => setPay(employee.id, e.target.value)}
+                        />
+                      </div>
                     </div>
-                  )}
+                  </div>
                 </div>
               );
             })}
@@ -1140,14 +1184,15 @@ function MemberForm({ token, onCreated, currentUser }) {
 
 function ShowForm({ token, managers, employees, onCreated }) {
   const [form, setForm] = useState({
-    date: "2026-03-22",
-    time: "19:30",
+    date: new Date().toISOString().split("T")[0],
+    time: "20:00",
     location: "",
-    manager_id: managers[0]?.id || "",
-    employee_ids: employees.slice(0, 2).map((employee) => employee.id)
+    manager_id: "",
+    employee_ids: [],
+    employee_pay: {}
   });
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -1161,13 +1206,29 @@ function ShowForm({ token, managers, employees, onCreated }) {
   }, [employees, managers]);
 
   const toggleEmployee = (id) => {
+    setForm((current) => {
+      const newIds = current.employee_ids.includes(id)
+        ? current.employee_ids.filter((employeeId) => employeeId !== id)
+        : [...current.employee_ids, id];
+      const newPay = { ...current.employee_pay };
+      if (!newIds.includes(id)) {
+        delete newPay[String(id)];
+      }
+      return { ...current, employee_ids: newIds, employee_pay: newPay };
+    });
+  };
+
+  const setPay = (id, value) => {
     setForm((current) => ({
       ...current,
-      employee_ids: current.employee_ids.includes(id)
-        ? current.employee_ids.filter((employeeId) => employeeId !== id)
-        : [...current.employee_ids, id]
+      employee_pay: {
+        ...current.employee_pay,
+        [String(id)]: value === "" ? null : Number(value)
+      }
     }));
   };
+
+  const totalPay = Object.values(form.employee_pay).reduce((sum, v) => sum + (Number(v) || 0), 0);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -1182,11 +1243,12 @@ function ShowForm({ token, managers, employees, onCreated }) {
         body: {
           ...form,
           manager_id: Number(form.manager_id),
-          employee_ids: form.employee_ids.map(Number)
+          employee_ids: form.employee_ids.map(Number),
+          employee_pay: form.employee_pay
         }
       });
       setMessage(`${data.show.location} scheduled as ${data.show.id}`);
-      setForm((current) => ({ ...current, location: "" }));
+      setForm((current) => ({ ...current, location: "", employee_pay: {} }));
       onCreated();
     } catch (requestError) {
       setError(requestError.message);
@@ -1197,7 +1259,7 @@ function ShowForm({ token, managers, employees, onCreated }) {
 
   return (
     <form className="panel" onSubmit={submit}>
-      <FormHeader icon={CalendarBlank} title="Add show" copy="Assign one manager and one or more singers." />
+      <FormHeader icon={CalendarBlank} title="Add show" copy="Assign one manager, singers, and optional show pay." />
       <div className="mt-5 grid gap-4 md:grid-cols-2">
         <TextField
           label="Date"
@@ -1236,26 +1298,67 @@ function ShowForm({ token, managers, employees, onCreated }) {
       </div>
 
       <div className="mt-5">
-        <p className="mb-2 text-sm text-slate-300">Assigned singers</p>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {employees.map((employee) => (
-            <label className="check-row" key={employee.id}>
-              <input
-                type="checkbox"
-                checked={form.employee_ids.includes(employee.id)}
-                onChange={() => toggleEmployee(employee.id)}
-              />
-              <div className="flex items-center gap-3 truncate">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-slate-300">
-                  {employee.name.charAt(0)}
-                </div>
-                <div className="truncate">
-                  <span className="block truncate font-medium text-slate-200">{employee.name}</span>
-                  <span className="block text-xs text-slate-500">{employee.username}</span>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-medium text-slate-300">Assigned singers & pay</p>
+          {totalPay > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-200">
+              <CurrencyInr size={12} weight="bold" />
+              Total: ₹{totalPay.toLocaleString("en-IN")}
+            </span>
+          )}
+        </div>
+        <div className="space-y-2">
+          {employees.map((employee) => {
+            const isAssigned = form.employee_ids.includes(employee.id);
+            const payValue = form.employee_pay[String(employee.id)];
+
+            return (
+              <div
+                key={employee.id}
+                className={`rounded-xl border transition-all p-3 ${
+                  isAssigned
+                    ? "border-indigo-400/20 bg-indigo-500/[0.06]"
+                    : "border-white/5 bg-white/[0.02]"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <label className="flex items-center gap-3 min-w-0 cursor-pointer flex-1">
+                    <input
+                      type="checkbox"
+                      checked={isAssigned}
+                      onChange={() => toggleEmployee(employee.id)}
+                      className="shrink-0"
+                    />
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-slate-300 shrink-0">
+                      {employee.name.charAt(0)}
+                    </div>
+                    <div className="min-w-0 truncate">
+                      <span className="block truncate font-medium text-slate-200">{employee.name}</span>
+                      <span className="block text-xs text-slate-500">{employee.username}</span>
+                    </div>
+                  </label>
+
+                  {isAssigned && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-xs text-slate-400">Pay:</span>
+                      <div className="relative w-28">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 text-xs">₹</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="100"
+                          className="field py-1 pl-5 pr-2 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          placeholder="Amount"
+                          value={payValue ?? ""}
+                          onChange={(e) => setPay(employee.id, e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
-            </label>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -1398,6 +1501,10 @@ function EmployeeShows({ shows, token, onChanged }) {
 function ManagerShows({ shows, token, role, onChanged, expanded = false }) {
   const [selectedMonth, setSelectedMonth] = useState(() => shows[0]?.date.slice(0, 7) || "");
   const [showCloneModal, setShowCloneModal] = useState(false);
+  const [editingShow, setEditingShow] = useState(null);
+  const { users } = useWorkspaceData();
+  const employees = useMemo(() => (users || []).filter((u) => u.role === "employee"), [users]);
+  const managers = useMemo(() => (users || []).filter((u) => u.role === "manager"), [users]);
   
   const filteredShows = useMemo(() => 
     selectedMonth ? shows.filter(s => s.date.startsWith(selectedMonth)) : shows
@@ -1443,8 +1550,27 @@ function ManagerShows({ shows, token, role, onChanged, expanded = false }) {
             ))
           )}
         </div>
-        <ApprovalPanel show={activeShow} token={token} onChanged={onChanged} />
+        <ApprovalPanel 
+          show={activeShow} 
+          token={token} 
+          onChanged={onChanged} 
+          onEditShow={activeShow ? () => setEditingShow(activeShow) : null}
+        />
       </section>
+
+      {editingShow && (
+        <ShowDetailModal
+          show={editingShow}
+          token={token}
+          allEmployees={employees}
+          managers={managers}
+          onClose={() => setEditingShow(null)}
+          onSaved={() => {
+            setEditingShow(null);
+            onChanged();
+          }}
+        />
+      )}
 
       {showCloneModal && (
         <CopyScheduleModal
@@ -1454,8 +1580,8 @@ function ManagerShows({ shows, token, role, onChanged, expanded = false }) {
           onClose={() => setShowCloneModal(false)}
           onDone={(newMonth) => {
             setShowCloneModal(false);
-            onChanged(); // Refresh global data
-            setSelectedMonth(newMonth); // Switch to the new month
+            onChanged();
+            setSelectedMonth(newMonth);
           }}
         />
       )}
@@ -1494,7 +1620,7 @@ function Meta({ icon, label }) {
   );
 }
 
-function ApprovalPanel({ show, token, onChanged }) {
+function ApprovalPanel({ show, token, onChanged, onEditShow }) {
   const [busyId, setBusyId] = useState(null);
   const rows = useMemo(() => {
     if (!show) return [];
@@ -1519,16 +1645,38 @@ function ApprovalPanel({ show, token, onChanged }) {
   };
 
   if (!show) {
-    return <EmptyState title="Select a show" copy="Open a show to review marked attendance." />;
+    return <EmptyState title="Select a show" copy="Open a show to review marked attendance and manage fees." />;
   }
+
+  const totalShowPay = (show.employees || []).reduce((sum, e) => sum + (Number(e.pay) || 0), 0);
 
   return (
     <section className="panel">
-      <div className="mb-5">
-        <h2 className="section-title">{show.location}</h2>
-        <p className="section-copy">
-          {formatDate(show.date)} at {formatTime(show.time)}
-        </p>
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="section-title">{show.location}</h2>
+          <p className="section-copy">
+            {formatDate(show.date)} at {formatTime(show.time)} • Manager: {show.manager?.name || "Unassigned"}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {totalShowPay > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-300">
+              <CurrencyInr size={13} weight="bold" />
+              Total: ₹{totalShowPay.toLocaleString("en-IN")}
+            </span>
+          )}
+          {onEditShow && (
+            <button
+              type="button"
+              onClick={onEditShow}
+              className="inline-flex items-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-500/15 px-3.5 py-1.5 text-xs font-semibold text-indigo-200 transition-all hover:bg-indigo-500/25 hover:border-indigo-400/50 shadow-sm"
+            >
+              <PencilSimple size={15} />
+              <span>Edit Fees & Show</span>
+            </button>
+          )}
+        </div>
       </div>
       <div className="space-y-3 md:hidden">
         {rows.map((row) => (
@@ -1540,7 +1688,13 @@ function ApprovalPanel({ show, token, onChanged }) {
               </div>
               <StatusBadge status={row.attendance?.approval_status || "waiting"} />
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <div>
+                <p className="mobile-label">Fee</p>
+                <p className="text-sm font-semibold text-emerald-300">
+                  {row.employee.pay != null ? `₹${Number(row.employee.pay).toLocaleString("en-IN")}` : "—"}
+                </p>
+              </div>
               <div>
                 <p className="mobile-label">Attendance</p>
                 <StatusBadge status={row.attendance ? "marked" : "not marked"} />
@@ -1579,7 +1733,8 @@ function ApprovalPanel({ show, token, onChanged }) {
         <table className="w-full min-w-[620px] text-left">
           <thead className="text-xs uppercase tracking-[0.18em] text-slate-500">
             <tr className="border-b border-white/10">
-              <th className="py-3 pr-4 font-medium">Name</th>
+              <th className="py-3 pr-4 font-medium">Singer Name</th>
+              <th className="py-3 pr-4 font-medium">Show Fee</th>
               <th className="py-3 pr-4 font-medium">Status</th>
               <th className="py-3 pr-4 font-medium">Approval</th>
               <th className="py-3 font-medium">Action</th>
@@ -1588,7 +1743,19 @@ function ApprovalPanel({ show, token, onChanged }) {
           <tbody className="divide-y divide-white/10">
             {rows.map((row) => (
               <tr key={row.employee.id}>
-                <td className="py-4 pr-4 text-white">{row.employee.name}</td>
+                <td className="py-4 pr-4">
+                  <div className="font-medium text-white">{row.employee.name}</div>
+                  <div className="text-xs text-slate-400">{row.employee.username}</div>
+                </td>
+                <td className="py-4 pr-4">
+                  {row.employee.pay != null ? (
+                    <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-300">
+                      ₹{Number(row.employee.pay).toLocaleString("en-IN")}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-500">—</span>
+                  )}
+                </td>
                 <td className="py-4 pr-4">
                   <StatusBadge status={row.attendance ? "marked" : "not marked"} />
                 </td>

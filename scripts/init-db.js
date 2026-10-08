@@ -30,7 +30,8 @@ async function init() {
         time TEXT NOT NULL,
         location TEXT NOT NULL,
         manager_id INTEGER REFERENCES users(id),
-        employee_ids INTEGER[] NOT NULL
+        employee_ids INTEGER[] NOT NULL,
+        employee_pay JSONB DEFAULT '{}'::jsonb
       )
     `;
 
@@ -63,13 +64,18 @@ async function init() {
     console.log("✅ Tables created successfully.");
 
     // 6. Seed Users
-    const hashedPassword = bcrypt.hashSync("dipfYh-pyfqeb-gyhzu1", 10);
+    const defaultSeedPassword = process.env.SEED_PASSWORD || "dipfYh-pyfqeb-gyhzu1";
+    const hashedPassword = bcrypt.hashSync(defaultSeedPassword, 10);
     const dummyUsers = [
-      { id: 1, name: "Aarav Mehta", username: "aarav@sunggeet.com", password: hashedPassword, role: "employee" },
-      { id: 2, name: "Naina Kapoor", username: "naina@sunggeet.com", password: hashedPassword, role: "employee" },
+      { id: 1, name: "SUNGGEET Admin", username: "admin@sunggeet.com", password: hashedPassword, role: "admin" },
+      { id: 2, name: "Vikram Malhotra", username: "vikram@sunggeet.com", password: hashedPassword, role: "superior" },
       { id: 3, name: "Kabir Sethi", username: "kabir@sunggeet.com", password: hashedPassword, role: "manager" },
-      { id: 4, name: "SUNGGEET Admin", username: "admin@sunggeet.com", password: hashedPassword, role: "admin" },
-      { id: 5, name: "Rhea Fernandes", username: "rhea@sunggeet.com", password: hashedPassword, role: "employee" }
+      { id: 4, name: "Mira Rao", username: "mira@sunggeet.com", password: hashedPassword, role: "manager" },
+      { id: 5, name: "Aarav Mehta", username: "aarav@sunggeet.com", password: hashedPassword, role: "employee" },
+      { id: 6, name: "Naina Kapoor", username: "naina@sunggeet.com", password: hashedPassword, role: "employee" },
+      { id: 7, name: "Rhea Fernandes", username: "rhea@sunggeet.com", password: hashedPassword, role: "employee" },
+      { id: 8, name: "Rohan Varma", username: "rohan@sunggeet.com", password: hashedPassword, role: "employee" },
+      { id: 9, name: "Ananya Iyer", username: "ananya@sunggeet.com", password: hashedPassword, role: "employee" }
     ];
 
     for (const user of dummyUsers) {
@@ -83,18 +89,39 @@ async function init() {
     }
     console.log("✅ Seed users added.");
 
+    // Helper for relative dates
+    const getOffsetDate = (offset) => {
+      const d = new Date();
+      d.setDate(d.getDate() + offset);
+      return d.toISOString().split("T")[0];
+    };
+
+    const dMinus3 = getOffsetDate(-3);
+    const dMinus2 = getOffsetDate(-2);
+    const dMinus1 = getOffsetDate(-1);
+    const dToday = getOffsetDate(0);
+    const dPlus1 = getOffsetDate(1);
+    const dPlus3 = getOffsetDate(3);
+    const dPlus5 = getOffsetDate(5);
+    const dPlus8 = getOffsetDate(8);
+
     // 7. Seed Shows
     const shows = [
-      { id: "SGT-1903-A", date: "2026-03-19", time: "18:00", location: "Blue Tokai Garden Cafe", manager_id: 4, employee_ids: [1, 2] },
-      { id: "SGT-1903-B", date: "2026-03-19", time: "20:30", location: "The Piano Man Jazz Club", manager_id: 4, employee_ids: [1, 3] },
-      { id: "SGT-2003-A", date: "2026-03-20", time: "19:00", location: "Olive Bistro Courtyard", manager_id: 5, employee_ids: [2, 3] },
-      { id: "SGT-2103-A", date: "2026-03-21", time: "21:00", location: "Soro Village Pub", manager_id: 5, employee_ids: [1, 2, 3] }
+      { id: `SGT-${dMinus3.replace(/-/g, "").slice(2)}-A`, date: dMinus3, time: "19:30", location: "The Piano Man Jazz Club", manager_id: 3, employee_ids: [5, 6], employee_pay: { "5": 7500, "6": 7500 } },
+      { id: `SGT-${dMinus2.replace(/-/g, "").slice(2)}-A`, date: dMinus2, time: "18:00", location: "Blue Tokai Garden Cafe", manager_id: 4, employee_ids: [6, 7, 8], employee_pay: { "6": 6000, "7": 6500, "8": 6000 } },
+      { id: `SGT-${dMinus1.replace(/-/g, "").slice(2)}-A`, date: dMinus1, time: "20:00", location: "Olive Bistro Courtyard", manager_id: 3, employee_ids: [5, 7, 9], employee_pay: { "5": 8000, "7": 8000, "9": 7500 } },
+      { id: `SGT-${dToday.replace(/-/g, "").slice(2)}-A`, date: dToday, time: "18:30", location: "Cyber Hub Social, Main Stage", manager_id: 3, employee_ids: [5, 6, 8], employee_pay: { "5": 9000, "6": 8500, "8": 8500 } },
+      { id: `SGT-${dToday.replace(/-/g, "").slice(2)}-B`, date: dToday, time: "21:00", location: "Hard Rock Cafe", manager_id: 4, employee_ids: [7, 9], employee_pay: { "7": 10000, "9": 10000 } },
+      { id: `SGT-${dPlus1.replace(/-/g, "").slice(2)}-A`, date: dPlus1, time: "20:30", location: "Soro Village Pub", manager_id: 4, employee_ids: [5, 6, 7, 8], employee_pay: { "5": 7000, "6": 7000, "7": 7000, "8": 7000 } },
+      { id: `SGT-${dPlus3.replace(/-/g, "").slice(2)}-A`, date: dPlus3, time: "19:00", location: "Summer House Cafe Acoustic Lounge", manager_id: 3, employee_ids: [8, 9], employee_pay: { "8": 8000, "9": 8000 } },
+      { id: `SGT-${dPlus5.replace(/-/g, "").slice(2)}-A`, date: dPlus5, time: "21:30", location: "Molecule Air Bar & Kitchen", manager_id: 4, employee_ids: [5, 7, 9], employee_pay: { "5": 9500, "7": 9500, "9": 9500 } },
+      { id: `SGT-${dPlus8.replace(/-/g, "").slice(2)}-A`, date: dPlus8, time: "20:00", location: "Depot48 Live Music Room", manager_id: 3, employee_ids: [6, 8], employee_pay: { "6": 8500, "8": 8500 } }
     ];
 
     for (const s of shows) {
       await sql`
-        INSERT INTO shows (id, date, time, location, manager_id, employee_ids)
-        VALUES (${s.id}, ${s.date}, ${s.time}, ${s.location}, ${s.manager_id}, ${s.employee_ids})
+        INSERT INTO shows (id, date, time, location, manager_id, employee_ids, employee_pay)
+        VALUES (${s.id}, ${s.date}, ${s.time}, ${s.location}, ${s.manager_id}, ${s.employee_ids}, ${JSON.stringify(s.employee_pay)})
         ON CONFLICT (id) DO NOTHING
       `;
     }

@@ -7,10 +7,16 @@ import writeXlsxFile from "write-excel-file/node";
 import { Buffer } from "node:buffer";
 import { neon } from "@neondatabase/serverless";
 
-if (!process.env.DATABASE_URL) {
+let sql;
+if (process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith("postgres")) {
+  sql = neon(process.env.DATABASE_URL);
+} else if (process.env.VERCEL || process.env.NODE_ENV === "production") {
   throw new Error("CRITICAL: DATABASE_URL is not set. Please add it to your Vercel Environment Variables.");
+} else {
+  console.log("ℹ️  DATABASE_URL not configured. Running in Mock Database mode with realistic sample shows and users.");
+  const { createMockSql } = await import("./mockDb.js");
+  sql = createMockSql();
 }
-const sql = neon(process.env.DATABASE_URL);
 
 
 const app = express();
@@ -161,13 +167,13 @@ const attendanceLedgerRows = async () => {
       const pay = payMap[String(employeeId)];
 
       return {
-        "Artist Name": employee.name,
-        "Artist Username": employee.username,
-        "Show Date": show.date.toISOString().split("T")[0],
+        "Artist Name": employee?.name || "Unknown",
+        "Artist Username": employee?.username || "",
+        "Show Date": show.date instanceof Date ? show.date.toISOString().split("T")[0] : String(show.date),
         "Show Time": show.time,
         Venue: show.location,
         "Show ID": show.id,
-        Manager: manager.name,
+        Manager: manager?.name || "Unknown",
         "Pay (₹)": pay != null ? Number(pay) : "",
         "Attendance Status": entry ? "Marked" : "Not Marked",
         "Approval Status": entry ? titleCase(entry.approval_status) : "Waiting",
@@ -197,8 +203,16 @@ app.get("/api/health", (_req, res) => {
 
 app.post("/api/auth/login", async (req, res) => {
   const { username, password, role } = req.body;
-  const normalizedUsername = normalizeUsername (username) ;
-  const userResults = await sql`SELECT * FROM users WHERE username = ${normalizedUsername}`;
+  const normalizedUsername = normalizeUsername(username);
+  let userResults = await sql`SELECT * FROM users WHERE username = ${normalizedUsername}`;
+
+  // Allow 'admin' as an alias for 'admin@sunggeet.com' and vice versa
+  if (userResults.length === 0 && normalizedUsername === "admin") {
+    userResults = await sql`SELECT * FROM users WHERE username = 'admin@sunggeet.com'`;
+  } else if (userResults.length === 0 && normalizedUsername === "admin@sunggeet.com") {
+    userResults = await sql`SELECT * FROM users WHERE username = 'admin'`;
+  }
+
   const user = userResults[0];
 
   if (!user || !(await bcrypt.compare(password, user.password))) {
@@ -283,6 +297,53 @@ app.delete("/api/users/:id", authenticate, requireRole("admin"), async (req, res
   } catch (error) {
     console.error("User deletion error:", error);
     res.status(500).json({ message: error.message || "Failed to delete user" });
+  }
+});
+
+app.patch("/api/users/:id", authenticate, requireRole("admin", "superior"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const existing = (await sql`SELECT * FROM users WHERE id = ${id}`)[0];
+    if (!existing) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const name = req.body.name !== undefined ? String(req.body.name).trim() : existing.name;
+    const username = req.body.username !== undefined ? normalizeUsername(req.body.username) : existing.username;
+    const role = req.body.role !== undefined ? String(req.body.role).trim() : existing.role;
+
+    if (!name || !username || !isValidRole(role)) {
+      return res.status(400).json({ message: "Name, username, and valid role are required" });
+    }
+
+    if (req.user.role === "superior" && (["admin", "superior"].includes(existing.role) || ["admin", "superior"].includes(role))) {
+      return res.status(403).json({ message: "Superiors can only edit managers and singers" });
+    }
+
+    if (username !== existing.username) {
+      const duplicate = (await sql`SELECT id FROM users WHERE username = ${username} AND id != ${id}`)[0];
+      if (duplicate) {
+        return res.status(409).json({ message: "Username already taken" });
+      }
+    }
+
+    let passwordHash = existing.password;
+    if (req.body.password && String(req.body.password).trim()) {
+      passwordHash = bcrypt.hashSync(String(req.body.password).trim(), 10);
+    }
+
+    const [updatedUser] = await sql`
+      UPDATE users
+      SET name = ${name}, username = ${username}, password = ${passwordHash}, role = ${role}
+      WHERE id = ${id}
+      RETURNING *
+    `;
+
+    const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
+    res.json({ user: publicUser(updatedUser), users: allUsers.map(publicUser) });
+  } catch (error) {
+    console.error("User update error:", error);
+    res.status(500).json({ message: error.message || "Failed to update user" });
   }
 });
 
@@ -400,13 +461,21 @@ app.get("/api/shows/:id", authenticate, async (req, res) => {
   return res.json({ show: await decorateShow(show) });
 });
 
-app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), async (req, res) => {
+app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior", "manager"), async (req, res) => {
   try {
     const showResult = await sql`SELECT * FROM shows WHERE id = ${req.params.id}`;
     const show = showResult[0];
 
     if (!show) {
       return res.status(404).json({ message: "Show not found" });
+    }
+
+    if (req.user.role === "manager" && show.manager_id !== req.user.id) {
+      return res.status(403).json({ message: "Managers can only edit shows they manage" });
+    }
+
+    if (req.user.role === "manager" && req.body.manager_id !== undefined && Number(req.body.manager_id) !== show.manager_id) {
+      return res.status(403).json({ message: "Managers cannot reassign a show to another manager" });
     }
 
     const date = req.body.date !== undefined ? String(req.body.date).trim() : (show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date);
@@ -616,7 +685,7 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
 
   const showSummary = allShows.map((show) => ({
     "Show ID": show.id,
-    Date: show.date.toISOString().split("T")[0],
+    Date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : String(show.date),
     Time: show.time,
     Venue: show.location,
     Manager: allUsers.find((u) => u.id === show.manager_id)?.name || "Unknown",
