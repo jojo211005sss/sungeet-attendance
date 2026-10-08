@@ -19,6 +19,9 @@ Attendance and show management for SUNGGEET's live music team: singers mark show
 - Website tab: floater photos load from the public site (`VITE_PUBLIC_SITE_URL`, default https://sungeet-main.vercel.app); image/audio uploads tested end to end incl. the live site; 3MB limit (Vercel's 4.5MB body cap); wav/m4a type fixes; replaced/deleted media is cleaned up (`pruneMedia`).
 - 2026-10-08: removed a hard-coded password GitGuardian flagged on the `mock-db-and-show-pay` branch (`fd8e69c`; demo mode now uses `demo1234`, `init-db.js` requires `SEED_PASSWORD`).
 
+- 2026-10-08: UI refresh: Geist font, warm charcoal + single brass accent (Tailwind `slate`/`indigo` remapped in `tailwind.config.js`), solid dialogs (`.modal`, `.modal-backdrop`), fixed squashed Publish/Team forms, "Not Marked" badge now red, 2-column stats on phones.
+- Dev quick login: with `DEV_LOGIN=1` in `.env`, `npm run dev` shows Admin / Manager / Singer buttons on the login screen. Local only (not in the production build, route never registers on Vercel). It logs in as real accounts on the live DB.
+
 ## In progress / next steps
 - Delete the QA test data from the live database: TEST Singer One, TEST Singer Two, TEST Manager, show SGT-0710-01 "TEST Venue Rooftop" (their password is `TEST_ACCOUNTS_PASSWORD` in `.env`).
 - Change the shared seed password on the real accounts (admin, Kabir, Aarav, Naina, Rhea): `scripts/change-password.js`.

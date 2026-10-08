@@ -4,7 +4,8 @@
 
 :root {
   color-scheme: dark;
-  background: #0f172a;
+  accent-color: #d48d46;
+  background: #11100e;
 }
 
 * {
@@ -15,13 +16,25 @@ body {
   margin: 0;
   min-width: 320px;
   overflow-x: hidden;
-  background: #0f172a;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #11100e;
+  font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 1;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(212, 141, 70, 0.7);
+  outline-offset: 2px;
+}
+
+.field:focus-visible {
+  outline: none;
 }
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -46,21 +59,21 @@ button:disabled {
 }
 
 .field::placeholder {
-  color: #64748b;
+  color: #7c7469;
 }
 
 select.field {
   appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, #94a3b8 50%),
-    linear-gradient(135deg, #94a3b8 50%, transparent 50%);
+  background-image: linear-gradient(45deg, transparent 50%, #a39b8f 50%),
+    linear-gradient(135deg, #a39b8f 50%, transparent 50%);
   background-position: calc(100% - 18px) 52%, calc(100% - 13px) 52%;
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
 }
 
 .field:focus {
-  border-color: rgba(99, 102, 241, 0.72);
-  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.14);
+  border-color: rgba(212, 141, 70, 0.72);
+  box-shadow: 0 0 0 4px rgba(212, 141, 70, 0.14);
   background: rgba(255, 255, 255, 0.08);
 }
 
@@ -69,6 +82,22 @@ select.field {
 .icon-button,
 .decision-button {
   min-height: 2.5rem;
+  font-size: 0.9rem;
+}
+
+.primary-button,
+.ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.primary-button,
+.ghost-button,
+.icon-button,
+.decision-button {
   border-radius: 0.75rem;
   transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms ease,
     background 180ms ease, color 180ms ease;
@@ -87,14 +116,14 @@ select.field {
 }
 
 .check-row:hover {
-  border-color: rgba(99, 102, 241, 0.42);
-  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(212, 141, 70, 0.42);
+  background: rgba(212, 141, 70, 0.1);
 }
 
 .check-row input {
   width: 1rem;
   height: 1rem;
-  accent-color: #6366f1;
+  accent-color: #d48d46;
 }
 
 .primary-button:active,
@@ -106,23 +135,23 @@ select.field {
 }
 
 .primary-button {
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: #6366f1;
+  border: 1px solid #e3a35c;
+  background: #d48d46;
   padding: 0.72rem 1rem;
-  color: white;
-  font-weight: 650;
-  box-shadow: 0 16px 38px -24px rgba(99, 102, 241, 0.85);
+  color: #1b1208;
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 12px 30px -18px rgba(212, 141, 70, 0.7);
 }
 
 .primary-button:hover {
-  background: #5558e8;
+  background: #e3a35c;
 }
 
 .ghost-button {
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
   padding: 0.72rem 1rem;
-  color: #cbd5e1;
+  color: #cbc4b9;
 }
 
 .ghost-button:hover,
@@ -137,7 +166,7 @@ select.field {
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.04);
-  color: #cbd5e1;
+  color: #cbc4b9;
 }
 
 .decision-button {
@@ -170,8 +199,8 @@ select.field {
   display: flex;
   width: min(20rem, 86vw);
   flex-direction: column;
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(2, 6, 23, 0.86);
+  border-right: 1px solid rgba(227, 222, 214, 0.07);
+  background: rgba(20, 18, 16, 0.94);
   padding: 1.25rem;
   backdrop-filter: blur(18px);
   transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -188,7 +217,7 @@ select.field {
   gap: 0.35rem;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 1.15rem;
-  background: rgba(2, 6, 23, 0.88);
+  background: rgba(17, 16, 14, 0.88);
   padding: 0.45rem;
   box-shadow: 0 22px 60px -32px rgba(0, 0, 0, 0.95);
   backdrop-filter: blur(18px);
@@ -203,7 +232,7 @@ select.field {
   justify-content: center;
   gap: 0.2rem;
   border-radius: 0.85rem;
-  color: #94a3b8;
+  color: #a39b8f;
   font-size: 0.68rem;
   line-height: 1;
   transition: background 180ms ease, color 180ms ease, transform 180ms ease;
@@ -217,7 +246,7 @@ select.field {
 }
 
 .mobile-nav-item-active {
-  background: rgba(99, 102, 241, 0.18);
+  background: rgba(212, 141, 70, 0.18);
   color: #fff;
 }
 
@@ -237,7 +266,7 @@ select.field {
   gap: 0.75rem;
   border-radius: 0.85rem;
   padding: 0.82rem 0.9rem;
-  color: #94a3b8;
+  color: #a39b8f;
   transition: background 180ms ease, color 180ms ease, transform 180ms ease;
 }
 
@@ -247,16 +276,38 @@ select.field {
 }
 
 .nav-item-active {
-  background: rgba(99, 102, 241, 0.16);
+  background: rgba(212, 141, 70, 0.16);
   color: #fff;
 }
 
 .panel,
 .stat-card,
 .show-card {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.066), rgba(255, 255, 255, 0.032));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(227, 222, 214, 0.08);
+  background: #1b1916;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* Dialogs: fully solid surface over a dark, blurred backdrop so the page
+   behind never shows through the form. */
+.modal-backdrop {
+  background: rgba(8, 7, 6, 0.78);
+  backdrop-filter: blur(6px);
+}
+
+.modal {
+  border: 1px solid rgba(227, 222, 214, 0.12);
+  border-radius: 1.25rem;
+  background: #1f1d1a;
+  box-shadow: 0 40px 100px -30px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.modal .field {
+  background-color: #161411;
+}
+
+.modal .upload {
+  background-color: #191714;
 }
 
 .panel {
@@ -296,15 +347,15 @@ select.field {
   margin-bottom: 0.45rem;
   font-size: 0.7rem;
   letter-spacing: 0.14em;
-  color: #64748b;
+  color: #7c7469;
   text-transform: uppercase;
 }
 
 .show-card:hover,
 .show-card-active {
-  border-color: rgba(99, 102, 241, 0.46);
-  background: linear-gradient(180deg, rgba(99, 102, 241, 0.16), rgba(255, 255, 255, 0.04));
-  box-shadow: 0 20px 60px -42px rgba(99, 102, 241, 0.9);
+  border-color: rgba(212, 141, 70, 0.46);
+  background: linear-gradient(180deg, rgba(212, 141, 70, 0.16), rgba(255, 255, 255, 0.04));
+  box-shadow: 0 20px 60px -42px rgba(212, 141, 70, 0.9);
   transform: translateY(-2px);
 }
 
@@ -336,15 +387,15 @@ select.field {
 }
 
 .section-title {
-  font-size: 1.08rem;
-  font-weight: 680;
-  letter-spacing: -0.01em;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   color: #fff;
 }
 
 .section-copy {
   margin-top: 0.25rem;
-  color: #94a3b8;
+  color: #a39b8f;
   font-size: 0.9rem;
 }
 
@@ -383,7 +434,7 @@ select.field {
   flex-direction: column;
   gap: 0.4rem;
   font-size: 0.82rem;
-  color: #cbd5e1;
+  color: #cbc4b9;
 }
 
 .form-grid {
@@ -417,7 +468,7 @@ select.field {
 .upload-label {
   font-size: 0.82rem;
   font-weight: 600;
-  color: #e2e8f0;
+  color: #e3ded6;
 }
 
 .upload-clear {
@@ -458,7 +509,7 @@ select.field {
   height: 9rem;
   border-radius: 0.75rem;
   overflow: hidden;
-  color: #64748b;
+  color: #7c7469;
   font-size: 0.78rem;
   background-color: rgba(255, 255, 255, 0.04);
   background-image:
@@ -497,7 +548,7 @@ select.field {
   margin: 0.55rem 0 0;
   font-size: 0.72rem;
   line-height: 1.5;
-  color: #94a3b8;
+  color: #a39b8f;
 }
 
 .upload-error {
@@ -551,9 +602,9 @@ select.field {
   height: 7.5rem;
   border-radius: 0.7rem;
   overflow: hidden;
-  color: #64748b;
+  color: #7c7469;
   font-size: 0.72rem;
-  background: rgba(15, 23, 42, 0.6);
+  background: rgba(17, 16, 14, 0.6);
 }
 
 .floater-thumb img {
@@ -572,7 +623,7 @@ select.field {
 .floater-name {
   font-size: 0.92rem;
   font-weight: 600;
-  color: #f1f5f9;
+  color: #f2efea;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -580,7 +631,7 @@ select.field {
 
 .floater-role {
   font-size: 0.74rem;
-  color: #94a3b8;
+  color: #a39b8f;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -603,8 +654,8 @@ select.field {
 }
 
 .floater-badge-off {
-  background: rgba(148, 163, 184, 0.16);
-  color: #94a3b8;
+  background: rgba(163, 155, 143, 0.16);
+  color: #a39b8f;
 }
 
 /* --------------------------------------------------------------------------
@@ -657,7 +708,6 @@ select.field {
    unfinished next to the public site. */
 body {
   background-image:
-    radial-gradient(70vh 50vh at 12% -10%, rgba(99, 102, 241, 0.10), transparent 70%),
-    radial-gradient(60vh 45vh at 100% 0%, rgba(212, 141, 70, 0.07), transparent 70%);
+    radial-gradient(70vh 50vh at 100% -10%, rgba(212, 141, 70, 0.07), transparent 70%);
   background-attachment: fixed;
 }

@@ -732,6 +732,21 @@ app.post("/api/auth/login", async (req, res) => {
   return res.json({ token: signToken(user), user: publicUser(user) });
 });
 
+// Local UI testing only: one-click login as the first user with a role.
+// Needs DEV_LOGIN=1 in .env, never registers on Vercel or in production,
+// and only answers requests from this machine.
+if (process.env.DEV_LOGIN === "1" && !process.env.VERCEL && process.env.NODE_ENV !== "production") {
+  app.post("/api/auth/dev-login", async (req, res) => {
+    if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress)) {
+      return res.status(403).json({ message: "Dev login is local only" });
+    }
+    const role = isValidRole(req.body?.role) ? req.body.role : "admin";
+    const [user] = await sql`SELECT * FROM users WHERE role = ${role} ORDER BY id LIMIT 1`;
+    if (!user) return res.status(404).json({ message: `No ${role} account exists` });
+    return res.json({ token: signToken(user), user: publicUser(user) });
+  });
+}
+
 app.get("/api/auth/me", authenticate, async (req, res) => {
   res.json({ user: publicUser(req.user), stats: await getStats(req.user) });
 });

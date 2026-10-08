@@ -25,6 +25,8 @@ import {
   Copy,
   Globe
 } from "@phosphor-icons/react";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
 import "./styles.css";
 
 const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? `http://${window.location.hostname}:4000/api` : "/api");
@@ -206,7 +208,7 @@ function LoginScreen({ onLogin }) {
 
   return (
     <main className="min-h-[100dvh] overflow-hidden bg-ink text-slate-100">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(99,102,241,0.2),transparent_32%),radial-gradient(circle_at_88%_12%,rgba(20,184,166,0.16),transparent_26%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(212,141,70,0.14),transparent_34%)]" />
       <section className="relative mx-auto grid min-h-[100dvh] max-w-7xl gap-10 px-5 py-8 md:grid-cols-[1.1fr_0.9fr] md:px-8">
         <div className="flex flex-col justify-between">
           <div className="flex items-center gap-3">
@@ -252,7 +254,7 @@ function LoginScreen({ onLogin }) {
             <span className="mb-2 block text-sm text-slate-300">Username</span>
             <input
               type="text"
-              className="w-full rounded-lg border border-white/10 bg-black/20 p-3 text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="field"
               placeholder="Enter your username"
               value={form.username}
               onChange={(event) => setForm({ ...form, username: event.target.value })}
@@ -269,6 +271,32 @@ function LoginScreen({ onLogin }) {
             />
           </label>
           </div>
+
+          {import.meta.env.DEV && (
+            <div className="mt-4 rounded-xl border border-dashed border-indigo-400/30 p-4">
+              <p className="text-xs text-slate-400">Dev only · quick login (writes to the live database)</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {[["admin", "Admin"], ["manager", "Manager"], ["employee", "Singer"]].map(([role, label]) => (
+                  <button
+                    key={role}
+                    type="button"
+                    className="ghost-button"
+                    onClick={async () => {
+                      setError("");
+                      try {
+                        const data = await api("/auth/dev-login", { method: "POST", body: { role } });
+                        onLogin({ nextToken: data.token, nextUser: data.user });
+                      } catch (err) {
+                        setError(err.message.includes("404") || err.message === "Not found" ? "Add DEV_LOGIN=1 to .env and restart" : err.message);
+                      }
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {error && <p className="mt-4 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p>}
 
@@ -305,8 +333,7 @@ function Shell({ children, user, view, setView, mobileOpen, setMobileOpen, onLog
 
   return (
     <main className="min-h-[100dvh] bg-ink text-slate-100">
-      <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_90%_8%,rgba(99,102,241,0.14),transparent_30%)]" />
-      <div className="relative grid min-h-[100dvh] lg:grid-cols-[280px_1fr]">
+           <div className="relative grid min-h-[100dvh] lg:grid-cols-[280px_1fr]">
         {mobileOpen && (
           <button
             className="fixed inset-0 z-10 bg-slate-950/60 backdrop-blur-sm lg:hidden"
@@ -672,9 +699,9 @@ function ShowDetailModal({ show, token, allEmployees, managers, onClose, onSaved
   const totalPay = Object.values(form.employee_pay).reduce((sum, v) => sum + (Number(v) || 0), 0);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center modal-backdrop p-4" onClick={onClose}>
       <div
-        className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[1.25rem] border border-white/10 bg-[#111827] p-6 shadow-lift"
+        className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto modal p-6"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -891,7 +918,7 @@ function DataView() {
                   key={m}
                   onClick={() => setSelectedMonth(m)}
                   className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                    selectedMonth === m ? "bg-indigoSoft text-white" : "text-slate-400 hover:text-white"
+                    selectedMonth === m ? "bg-indigoSoft text-ink font-semibold" : "text-slate-400 hover:text-white"
                   }`}
                 >
                   {formatMonthLabel(m)}
@@ -1345,10 +1372,10 @@ function StatsGrid({ stats, role }) {
   ];
 
   return (
-    <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
       {cards.map((card, index) => (
         <div className="stat-card" style={{ animationDelay: `${index * 70}ms` }} key={card.label}>
-          <p className="font-mono text-3xl text-white">{card.value}</p>
+          <p className="text-3xl font-semibold tracking-tight text-white tabular-nums">{card.value}</p>
           <p className="mt-2 text-sm text-slate-400">{card.label}</p>
         </div>
       ))}
@@ -1723,8 +1750,8 @@ function CopyScheduleModal({ shows, sourceMonth, token, onClose, onDone }) {
   }, [year, month]);
 
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-[1.25rem] border border-white/10 bg-[#111827] p-6 shadow-lift">
+    <div className="fixed inset-0 z-[60] grid place-items-center modal-backdrop p-4">
+      <div className="w-full max-w-md modal p-6">
         <h2 className="text-xl font-semibold text-white">Copy monthly schedule</h2>
         <p className="mt-2 text-sm text-slate-400">
           This will copy all {shows.length} shows from <strong>{sourceLabel}</strong> to a new month.
@@ -1791,8 +1818,8 @@ function ConfirmAttendanceModal({ show, token, onClose, onDone }) {
   };
 
   return (
-    <div className="fixed inset-0 grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-[1.25rem] border border-white/10 bg-[#111827] p-6 shadow-lift">
+    <div className="fixed inset-0 z-50 grid place-items-center modal-backdrop p-4">
+      <div className="w-full max-w-md modal p-6">
         <h2 className="text-xl font-semibold text-white">Confirm attendance</h2>
         <p className="mt-3 text-sm leading-6 text-slate-300">
           Confirm you attended {show.location} on {formatDate(show.date)} at {formatTime(show.time)}.
@@ -1836,10 +1863,10 @@ function ExportButton({ token }) {
 function StatusBadge({ status }) {
   const normalized = status.toLowerCase();
   const tone =
-    normalized.includes("approved") || normalized.includes("marked")
-      ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200"
-      : normalized.includes("rejected") || normalized.includes("not")
-        ? "border-rose-400/25 bg-rose-500/10 text-rose-200"
+    normalized.includes("rejected") || normalized.includes("not")
+      ? "border-rose-400/25 bg-rose-500/10 text-rose-200"
+      : normalized.includes("approved") || normalized.includes("marked")
+        ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200"
         : "border-amber-400/25 bg-amber-500/10 text-amber-200";
 
   return (
@@ -1878,7 +1905,7 @@ function MonthFilter({ shows, selectedMonth, onSelect }) {
             onClick={() => onSelect(m)}
             className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
               isActive 
-                ? "bg-indigoSoft text-white shadow-lift" 
+                ? "bg-indigoSoft text-ink font-semibold shadow-lift" 
                 : "bg-white/[0.04] text-slate-400 hover:bg-white/[0.08] hover:text-white border border-white/5"
             }`}
           >
@@ -2120,8 +2147,8 @@ function PublishShowDialog({ token, show, teams, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4 overflow-y-auto">
-      <div className="panel w-full max-w-lg my-8">
+    <div className="fixed inset-0 z-50 grid place-items-center modal-backdrop p-4 overflow-y-auto">
+      <div className="modal w-full max-w-lg my-8 p-6">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Publish to the website</h2>
           <button className="icon-button" onClick={onClose}><X size={18} /></button>
@@ -2138,40 +2165,43 @@ function PublishShowDialog({ token, show, teams, onClose, onSaved }) {
             <input className="field" value={form.venue} onChange={set("venue")} placeholder={show.location} />
           </label>
 
-          <label className="field-label">
-            <span>City *</span>
-            <input className="field" value={form.city} onChange={set("city")} placeholder="New Delhi" />
-          </label>
+          <div className="form-grid">
+            <label className="field-label">
+              <span>City *</span>
+              <input className="field" value={form.city} onChange={set("city")} placeholder="New Delhi" />
+            </label>
+            <label className="field-label">
+              <span>Event type *</span>
+              <select className="field" value={form.event_type} onChange={set("event_type")}>
+                {EVENT_TYPES.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
+              </select>
+            </label>
+          </div>
 
-          <label className="field-label">
-            <span>Event type *</span>
-            <select className="field" value={form.event_type} onChange={set("event_type")}>
-              {EVENT_TYPES.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
-            </select>
-          </label>
+          <div className="form-grid">
+            <label className="field-label">
+              <span>Team playing</span>
+              <select className="field" value={form.team_id} onChange={set("team_id")}>
+                <option value="">— none —</option>
+                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </label>
+            <label className="field-label">
+              <span>Set name</span>
+              <input className="field" value={form.set_name} onChange={set("set_name")} placeholder="Jazz standards, Sufi second set" />
+            </label>
+          </div>
 
-          <label className="field-label">
-            <span>Team playing</span>
-            <select className="field" value={form.team_id} onChange={set("team_id")}>
-              <option value="">— none —</option>
-              {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </label>
-
-          <label className="field-label">
-            <span>Set name</span>
-            <input className="field" value={form.set_name} onChange={set("set_name")} placeholder="Jazz standards, Sufi second set" />
-          </label>
-
-          <label className="field-label">
-            <span>Note</span>
-            <input className="field" value={form.note} onChange={set("note")} placeholder="Two sets, no cover." />
-          </label>
-
-          <label className="field-label">
-            <span>Ticket link</span>
-            <input className="field" value={form.ticket_url} onChange={set("ticket_url")} placeholder="https://…" />
-          </label>
+          <div className="form-grid">
+            <label className="field-label">
+              <span>Note</span>
+              <input className="field" value={form.note} onChange={set("note")} placeholder="Two sets, no cover." />
+            </label>
+            <label className="field-label">
+              <span>Ticket link</span>
+              <input className="field" value={form.ticket_url} onChange={set("ticket_url")} placeholder="https://…" />
+            </label>
+          </div>
 
           <MediaUpload
             token={token}
@@ -2280,8 +2310,8 @@ function TeamDialog({ token, team, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4 overflow-y-auto">
-      <div className="panel w-full max-w-lg my-8">
+    <div className="fixed inset-0 z-50 grid place-items-center modal-backdrop p-4 overflow-y-auto">
+      <div className="modal w-full max-w-lg my-8 p-6">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">{team ? "Edit team" : "Add a team"}</h2>
           <button className="icon-button" onClick={onClose}><X size={18} /></button>
