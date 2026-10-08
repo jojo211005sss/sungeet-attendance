@@ -897,18 +897,105 @@ app.get("/api/shows", authenticate, async (req, res) => {
 });
 
 
+/* ----------------------------------------------------------------------------
+   VENUES
+   Saved once, picked from a list. shows.location keeps a copy of the name
+   because the website publisher, the Excel export and old rows read it; it is
+   rewritten whenever the venue is renamed or merged.
+   ---------------------------------------------------------------------------- */
+
+const cleanVenueName = (name) => String(name || "").trim().replace(/\s+/g, " ").slice(0, 120);
+
+/** A venue from `venue_id`, or found / created from a typed `location` name. */
+async function resolveVenue({ venue_id, location }) {
+  if (venue_id) {
+    const [venue] = await sql`SELECT id, name FROM venues WHERE id = ${Number(venue_id)}`;
+    return venue || null;
+  }
+  const name = cleanVenueName(location);
+  if (!name) return null;
+  const [venue] = await sql`
+    INSERT INTO venues (name) VALUES (${name})
+    ON CONFLICT ((lower(name))) DO UPDATE SET name = venues.name
+    RETURNING id, name
+  `;
+  return venue;
+}
+
+app.get("/api/venues", authenticate, requireRole("admin", "superior"), async (_req, res) => {
+  try {
+    const venues = await sql`
+      SELECT v.id, v.name, COUNT(s.id)::int AS shows, MAX(s.date) AS last_show
+      FROM venues v LEFT JOIN shows s ON s.venue_id = v.id
+      GROUP BY v.id ORDER BY lower(v.name)
+    `;
+    return res.json({
+      venues: venues.map((v) => ({
+        ...v,
+        last_show: v.last_show instanceof Date ? v.last_show.toISOString().split("T")[0] : v.last_show
+      }))
+    });
+  } catch (error) {
+    console.error("venues list error:", error);
+    return res.status(500).json({ message: "Could not load venues" });
+  }
+});
+
+app.post("/api/venues", authenticate, requireRole("admin", "superior"), async (req, res) => {
+  const venue = await resolveVenue({ location: req.body.name });
+  if (!venue) return res.status(400).json({ message: "Give the venue a name" });
+  return res.status(201).json({ venue });
+});
+
+// Rename a venue, or merge it into another (fixes duplicates like
+// "Chords & Coffee" / "Chords and Coffee"). Shows follow either way.
+app.patch("/api/venues/:id", authenticate, requireRole("admin", "superior"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [venue] = await sql`SELECT id, name FROM venues WHERE id = ${id}`;
+    if (!venue) return res.status(404).json({ message: "Venue not found" });
+
+    if (req.body.merge_into !== undefined) {
+      const [target] = await sql`SELECT id, name FROM venues WHERE id = ${Number(req.body.merge_into)}`;
+      if (!target || target.id === id) return res.status(400).json({ message: "Pick a different venue to merge into" });
+      await sql`UPDATE shows SET venue_id = ${target.id}, location = ${target.name} WHERE venue_id = ${id}`;
+      await sql`DELETE FROM venues WHERE id = ${id}`;
+      return res.json({ venue: target });
+    }
+
+    const name = cleanVenueName(req.body.name);
+    if (!name) return res.status(400).json({ message: "Give the venue a name" });
+    const [clash] = await sql`SELECT id FROM venues WHERE lower(name) = lower(${name}) AND id <> ${id}`;
+    if (clash) return res.status(409).json({ message: "Another venue already has that name. Merge them instead." });
+    const [renamed] = await sql`UPDATE venues SET name = ${name} WHERE id = ${id} RETURNING id, name`;
+    await sql`UPDATE shows SET location = ${name} WHERE venue_id = ${id}`;
+    return res.json({ venue: renamed });
+  } catch (error) {
+    console.error("venue update error:", error);
+    return res.status(500).json({ message: "Could not update venue" });
+  }
+});
+
+app.delete("/api/venues/:id", authenticate, requireRole("admin", "superior"), async (req, res) => {
+  const id = Number(req.params.id);
+  const [{ count }] = await sql`SELECT COUNT(*)::int FROM shows WHERE venue_id = ${id}`;
+  if (count) return res.status(409).json({ message: "This venue has shows. Merge it into another venue instead." });
+  await sql`DELETE FROM venues WHERE id = ${id}`;
+  return res.json({ ok: true });
+});
+
 app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (req, res) => {
   try {
     const date = String(req.body.date || "").trim();
     const time = String(req.body.time || "").trim();
-    const location = String(req.body.location || "").trim();
+    const venue = await resolveVenue(req.body);
     const managerId = req.body.manager_id ? Number(req.body.manager_id) : null;
     const employeeIds = [...new Set((req.body.employee_ids || []).map(Number))];
     const employeePay = req.body.employee_pay || {};
     const manager = managerId ? await byId(managerId) : null;
 
-    if (!date || !time || !location || !manager || manager.role !== "manager") {
-      return res.status(400).json({ message: "Date, time, location, and a valid manager are required" });
+    if (!date || !time || !venue || !manager || manager.role !== "manager") {
+      return res.status(400).json({ message: "Date, time, venue, and a valid manager are required" });
     }
 
     if (!(await allSingers(employeeIds))) {
@@ -926,8 +1013,8 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
     const id = `${prefix}${String(Number(max) + 1).padStart(2, "0")}`;
 
     const [newShow] = await sql`
-      INSERT INTO shows (id, date, time, location, manager_id, employee_ids, employee_pay)
-      VALUES (${id}, ${date}, ${time}, ${location}, ${managerId}, ${employeeIds}, ${JSON.stringify(employeePay)})
+      INSERT INTO shows (id, date, time, location, venue_id, manager_id, employee_ids, employee_pay)
+      VALUES (${id}, ${date}, ${time}, ${venue.name}, ${venue.id}, ${managerId}, ${employeeIds}, ${JSON.stringify(employeePay)})
       RETURNING *
     `;
 
@@ -984,7 +1071,9 @@ app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), asyn
 
     const date = req.body.date !== undefined ? String(req.body.date).trim() : (show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date);
     const time = req.body.time !== undefined ? String(req.body.time).trim() : show.time;
-    const location = req.body.location !== undefined ? String(req.body.location).trim() : show.location;
+    const venueChanged = req.body.venue_id !== undefined || req.body.location !== undefined;
+    const venue = venueChanged ? await resolveVenue(req.body) : { id: show.venue_id, name: show.location };
+    if (!venue) return res.status(400).json({ message: "Pick a venue" });
     const managerId = req.body.manager_id !== undefined ? Number(req.body.manager_id) : show.manager_id;
     const employeeIds = req.body.employee_ids !== undefined
       ? [...new Set((req.body.employee_ids || []).map(Number))]
@@ -1008,7 +1097,8 @@ app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), asyn
       UPDATE shows
       SET date = ${date},
           time = ${time},
-          location = ${location},
+          location = ${venue.name},
+          venue_id = ${venue.id},
           manager_id = ${managerId},
           employee_ids = ${employeeIds},
           employee_pay = ${JSON.stringify(employeePay)}

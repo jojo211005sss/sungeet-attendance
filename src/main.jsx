@@ -58,6 +58,7 @@ function DataProvider({ children, token, user, onUnauthorized }) {
       shows: cached?.shows || [],
       profile: cached?.profile || null,
       users: cached?.users || [],
+      venues: cached?.venues || [],
       activity: cached?.activity || { status: null, summary: null },
       loading: !cached,
       initialLoadDone: !!cached,
@@ -85,7 +86,7 @@ function DataProvider({ children, token, user, onUnauthorized }) {
 
       // Only admins can list users.
       const admin = isAdmin(user);
-      if (admin) endpoints.push(api("/users", { token }));
+      if (admin) endpoints.push(api("/users", { token }), api("/venues", { token }));
 
       const results = await Promise.all(endpoints);
       lastFetch.current = Date.now();
@@ -94,7 +95,8 @@ function DataProvider({ children, token, user, onUnauthorized }) {
         shows: results[0].shows,
         profile: results[1],
         activity: { status: results[2].status, summary: results[2].summary },
-        users: admin ? results[3].users : []
+        users: admin ? results[3].users : [],
+        venues: admin ? results[4].venues : []
       };
       writeCache(user, "workspace", data);
       setState({ ...data, loading: false, initialLoadDone: true, error: "" });
@@ -908,6 +910,9 @@ function ShowsPage({ user, initialFilter }) {
         sub={staff ? "Schedule, line-ups and attendance approvals." : "Your schedule and attendance."}
         actions={admin && (
           <>
+            <button className="btn btn-secondary" onClick={() => setSheet("venues")}>
+              <MapPin size={16} /> Venues
+            </button>
             {monthShows.length > 0 && (
               <button className="btn btn-secondary" onClick={() => setSheet("copy")} title="Copy this month's shows to another month">
                 <Copy size={16} /> Copy month
@@ -977,6 +982,7 @@ function ShowsPage({ user, initialFilter }) {
           }}
         />
       )}
+      {sheet === "venues" && <VenuesSheet onClose={() => setSheet(null)} />}
       {sheet === "copy" && (
         <CopyMonthSheet
           shows={monthShows}
@@ -1213,11 +1219,12 @@ function useReview() {
 
 /* Create or edit a show. Pay sits next to each singer so it's set in one pass. */
 function ShowEditor({ show, managers, singers, onClose, onSaved }) {
-  const { token, refresh } = useData();
+  const { token, refresh, venues } = useData();
   const { toast } = useUI();
   const [form, setForm] = useState(() => ({
     date: show?.date || todayIST(),
     time: show?.time || "19:30",
+    venue_id: show?.venue_id ?? null,
     location: show?.location || "",
     manager_id: show?.manager_id ?? managers[0]?.id ?? "",
     employee_ids: show?.employee_ids || show?.employees.map((e) => e.id) || [],
@@ -1243,7 +1250,7 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
   const visibleSingers = singers.filter((s) => s.name.toLowerCase().includes(query.trim().toLowerCase()));
 
   const save = async () => {
-    if (!form.location.trim()) return setError("Add a venue for the show.");
+    if (!form.location.trim()) return setError("Pick or add a venue.");
     if (!form.manager_id) return setError("Pick a manager. Add one in Team first if the list is empty.");
     if (!form.employee_ids.length) return setError("Assign at least one singer.");
     setSaving(true);
@@ -1251,6 +1258,7 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
     const body = {
       date: form.date,
       time: form.time,
+      venue_id: form.venue_id,
       location: form.location.trim(),
       manager_id: Number(form.manager_id),
       employee_ids: form.employee_ids.map(Number),
@@ -1287,9 +1295,14 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
       }
     >
       <div className="form-grid">
-        <Field label="Venue">
-          <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Bandra Social Rooftop" />
-        </Field>
+        <div className="field">
+          <span className="field-label">Venue</span>
+          <VenuePicker
+            venues={venues}
+            value={{ venue_id: form.venue_id, name: form.location }}
+            onChange={({ venue_id, name }) => setForm((f) => ({ ...f, venue_id, location: name }))}
+          />
+        </div>
         <div className="form-grid form-grid-2 !grid-cols-2">
           <Field label="Date">
             <input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
@@ -1359,6 +1372,188 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
   );
 }
 
+/* Type to find a saved venue, or add a new one. Most-used venues show first. */
+function VenuePicker({ venues, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const query = value.name.trim().replace(/\s+/g, " ").toLowerCase();
+  const exact = venues.find((v) => v.name.toLowerCase() === query);
+  const matches = venues
+    .filter((v) => !query || value.venue_id || v.name.toLowerCase().includes(query))
+    .sort((a, b) => b.shows - a.shows || a.name.localeCompare(b.name))
+    .slice(0, 8);
+
+  const pick = (venue) => {
+    onChange({ venue_id: venue.id, name: venue.name });
+    setOpen(false);
+  };
+
+  return (
+    <div>
+      <div className="relative">
+        <MapPin size={17} className="absolute left-3 top-1/2 -translate-y-1/2 subtle" />
+        <input
+          className="input !pl-9 pr-10"
+          role="combobox"
+          aria-expanded={open}
+          aria-autocomplete="list"
+          placeholder="Search or add a venue"
+          value={value.name}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 120)}
+          onChange={(e) => {
+            const name = e.target.value;
+            const same = venues.find((v) => v.name.toLowerCase() === name.trim().replace(/\s+/g, " ").toLowerCase());
+            onChange({ venue_id: same?.id ?? null, name });
+            setOpen(true);
+          }}
+        />
+        {value.venue_id && <CheckCircle size={18} weight="fill" className="absolute right-3 top-1/2 -translate-y-1/2 text-ok" aria-label="Saved venue" />}
+      </div>
+      {open && (matches.length > 0 || (query && !exact)) && (
+        <ul className="combo-list" role="listbox">
+          {matches.map((v) => (
+            <li key={v.id}>
+              <button type="button" role="option" aria-selected={value.venue_id === v.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(v)}>
+                <span className="truncate">{v.name}</span>
+                <span className="text-xs subtle">{plural(v.shows, "show")}</span>
+              </button>
+            </li>
+          ))}
+          {query && !exact && (
+            <li>
+              <button type="button" className="font-medium" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(false)}>
+                <span className="truncate"><Plus size={14} weight="bold" className="mr-1.5 inline" />Add “{value.name.trim()}” as a new venue</span>
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+      {!value.venue_id && query && <p className="field-hint mt-1.5">New venue. It's saved when you save the show.</p>}
+    </div>
+  );
+}
+
+/* Rename, merge duplicates, add or remove saved venues. */
+function VenuesSheet({ onClose }) {
+  const { token, venues, refresh } = useData();
+  const { toast, confirm } = useUI();
+  const [editing, setEditing] = useState(null); // venue being edited
+  const [name, setName] = useState("");
+  const [mergeInto, setMergeInto] = useState("");
+  const [newName, setNewName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const run = async (fn, message) => {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+      await refresh(true);
+      toast(message);
+      setEditing(null);
+      setNewName("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const open = (venue) => {
+    setEditing(venue);
+    setName(venue.name);
+    setMergeInto("");
+    setError("");
+  };
+
+  if (editing) {
+    const target = venues.find((v) => String(v.id) === mergeInto);
+    return (
+      <Sheet title={editing.name} subtitle={`${plural(editing.shows, "show")}${editing.last_show ? ` · last on ${fmtDate(editing.last_show, { day: "numeric", month: "short", year: "numeric" })}` : ""}`} onClose={() => setEditing(null)}>
+        <Field label="Name" hint="Renaming updates every show at this venue.">
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <button
+          className="btn btn-primary btn-block mt-3"
+          disabled={busy || !name.trim() || name.trim() === editing.name}
+          onClick={() => run(() => api(`/venues/${editing.id}`, { token, method: "PATCH", body: { name } }), "Venue renamed")}
+        >
+          Save name
+        </button>
+
+        <h3 className="section-label mb-2 mt-7">Duplicate of another venue?</h3>
+        <Field label="Merge into" hint="Moves all its shows to the venue you pick, then removes this one.">
+          <select className="input" value={mergeInto} onChange={(e) => setMergeInto(e.target.value)}>
+            <option value="">Choose a venue</option>
+            {venues.filter((v) => v.id !== editing.id).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </Field>
+        <button
+          className="btn btn-secondary btn-block mt-3"
+          disabled={busy || !target}
+          onClick={async () => {
+            const ok = await confirm({
+              title: `Merge into ${target.name}?`,
+              body: `${plural(editing.shows, "show")} move to ${target.name} and "${editing.name}" is removed.`,
+              confirmLabel: "Merge"
+            });
+            if (ok) run(() => api(`/venues/${editing.id}`, { token, method: "PATCH", body: { merge_into: target.id } }), `Merged into ${target.name}`);
+          }}
+        >
+          Merge
+        </button>
+
+        {editing.shows === 0 && (
+          <button
+            className="btn btn-danger btn-block mt-7"
+            disabled={busy}
+            onClick={() => run(() => api(`/venues/${editing.id}`, { token, method: "DELETE" }), "Venue removed")}
+          >
+            <Trash size={16} /> Remove venue
+          </button>
+        )}
+        {error && <p className="alert tone-bad mt-4">{error}</p>}
+      </Sheet>
+    );
+  }
+
+  return (
+    <Sheet title="Venues" subtitle={`${plural(venues.length, "saved venue")} · pick them when adding a show`} onClose={onClose}>
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (newName.trim()) run(() => api("/venues", { token, method: "POST", body: { name: newName } }), "Venue added");
+        }}
+      >
+        <input className="input" placeholder="Add a venue" value={newName} onChange={(e) => setNewName(e.target.value)} />
+        <button className="btn btn-primary !min-h-11 flex-none" disabled={busy || !newName.trim()}><Plus size={16} weight="bold" /> Add</button>
+      </form>
+      {error && <p className="alert tone-bad mt-3">{error}</p>}
+      <div className="card mt-4 overflow-hidden">
+        {venues.length === 0 ? (
+          <Empty icon={MapPin} title="No venues yet" copy="Add one above, or type one when creating a show." />
+        ) : (
+          venues.map((v) => (
+            <button key={v.id} className="row" onClick={() => open(v)}>
+              <span className="thumb"><MapPin size={18} /></span>
+              <div className="row-main">
+                <p className="row-title">{v.name}</p>
+                <p className="row-sub">
+                  {plural(v.shows, "show")}
+                  {v.last_show ? ` · last ${fmtDate(v.last_show, { day: "numeric", month: "short", year: "numeric" })}` : ""}
+                </p>
+              </div>
+              <PencilSimple size={16} className="subtle" />
+            </button>
+          ))
+        )}
+      </div>
+    </Sheet>
+  );
+}
+
 function CopyMonthSheet({ shows, sourceMonth, onClose, onDone }) {
   const { token, refresh } = useData();
   const { toast } = useUI();
@@ -1391,6 +1586,7 @@ function CopyMonthSheet({ shows, sourceMonth, onClose, onDone }) {
           body: {
             date: `${targetMonth}-${day}`,
             time: show.time,
+            venue_id: show.venue_id,
             location: show.location,
             manager_id: show.manager_id,
             employee_ids: show.employee_ids,
@@ -2279,7 +2475,7 @@ function useReportModel() {
     const teamNames = Object.fromEntries((teamData?.teams || []).map((t) => [String(t.id), t.name]));
     const teamByShow = Object.fromEntries((teamData?.links || []).map((l) => [String(l.show_id), String(l.team_id)]));
     const venueNames = {};
-    for (const show of shows) venueNames[venueKey(show.location)] ??= show.location.trim();
+    for (const show of shows) venueNames[showVenueKey(show)] ??= show.location.trim();
 
     // One row per singer per show: everything is summed from these.
     const slots = shows.flatMap((show) =>
@@ -2292,7 +2488,7 @@ function useReportModel() {
     );
 
     const dims = {
-      venue: { label: "Venues", one: "venue", keyOf: (s) => venueKey(s.show.location), nameOf: (k) => venueNames[k] || k, always: [] },
+      venue: { label: "Venues", one: "venue", keyOf: (s) => showVenueKey(s.show), nameOf: (k) => venueNames[k] || k, always: [] },
       team: {
         label: "Teams",
         one: "team",
@@ -2359,6 +2555,8 @@ function summarize(slots) {
 }
 
 const slotsIn = (slots, period) => (period.kind === "all" ? slots : slots.filter((s) => s.show.date.startsWith(period.value)));
+// Saved venues group by id; any show without one falls back to its typed name.
+const showVenueKey = (show) => (show.venue_id ? `v${show.venue_id}` : venueKey(show.location));
 const venueKey = (location) => String(location || "").trim().toLowerCase().replace(/\s+/g, " ");
 
 function groupBy(list, keyOf) {
