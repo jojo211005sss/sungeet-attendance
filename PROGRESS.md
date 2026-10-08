@@ -22,6 +22,8 @@ Attendance and show management for SUNGGEET's live music team: singers mark show
 - 2026-10-08: UI refresh: Geist font, warm charcoal + single brass accent (Tailwind `slate`/`indigo` remapped in `tailwind.config.js`), solid dialogs (`.modal`, `.modal-backdrop`), fixed squashed Publish/Team forms, "Not Marked" badge now red, 2-column stats on phones.
 - Dev quick login: with `DEV_LOGIN=1` in `.env`, `npm run dev` shows Admin / Manager / Singer buttons on the login screen. Local only (not in the production build, route never registers on Vercel). It logs in as real accounts on the live DB.
 
+- 2026-10-08 (later): full UI/UX redesign, mobile-first, styled after workforce apps (Homebase/Connecteam/Linear). Light warm theme, Geist font, CSS tokens in `src/styles.css`. Phones: bottom tab bar (admin: Home/Shows/Team/Website/More), bottom sheets; desktop: sidebar + right-hand drawers. New: Home approvals inbox (approve/reject inline), Team page (search, roles, today's availability), Reports with pay in ₹, singer "Ready to mark" + earnings, toasts and in-app confirm dialogs instead of alert()/confirm(). Old Admin tab split into Team (members) and Shows (New show / edit in the show drawer); Excel export moved to Reports.
+
 ## In progress / next steps
 - Delete the QA test data from the live database: TEST Singer One, TEST Singer Two, TEST Manager, show SGT-0710-01 "TEST Venue Rooftop" (their password is `TEST_ACCOUNTS_PASSWORD` in `.env`).
 - Change the shared seed password on the real accounts (admin, Kabir, Aarav, Naina, Rhea): `scripts/change-password.js`.

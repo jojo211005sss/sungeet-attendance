@@ -1,35 +1,49 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import {
+  ArrowRight,
   CalendarBlank,
+  CalendarCheck,
+  CaretLeft,
+  CaretRight,
+  ChartBar,
   Check,
-  Clock,
-  CurrencyInr,
+  CheckCircle,
+  ClockCounterClockwise,
+  Copy,
+  DotsThreeOutline,
   DownloadSimple,
-  FloppyDisk,
-  GearSix,
+  Eye,
+  EyeSlash,
+  Globe,
   House,
-  List,
-  MapPin,
+  Image,
+  MagnifyingGlass,
+  MusicNotes,
   PencilSimple,
   Plus,
   SignOut,
-  UserCircle,
-  UserPlus,
-  Users,
-  ChartBar,
-  X,
-  CheckCircle,
-  XCircle,
   Trash,
-  Copy,
-  Globe
+  Tray,
+  UserPlus,
+  UsersThree,
+  WarningCircle,
+  X
 } from "@phosphor-icons/react";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./styles.css";
 
 const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? `http://${window.location.hostname}:4000/api` : "/api");
+
+const ROLE_LABEL = { employee: "Singer", manager: "Manager", admin: "Admin", superior: "Superior" };
+const isAdmin = (user) => user?.role === "admin" || user?.role === "superior";
+const isStaff = (user) => user?.role !== "employee";
+
+/* ==========================================================================
+   DATA
+   ========================================================================== */
 
 const DataContext = createContext();
 
@@ -40,65 +54,131 @@ function DataProvider({ children, token, user }) {
     users: [],
     activity: { status: null, summary: null },
     loading: true,
-    initialLoadDone: false
+    initialLoadDone: false,
+    error: ""
   });
 
   const removeUser = useCallback((id) => {
-    setState(s => ({ ...s, users: s.users.filter(u => u.id !== id) }));
+    setState((s) => ({ ...s, users: s.users.filter((u) => u.id !== id) }));
   }, []);
 
   const removeShow = useCallback((id) => {
-    setState(s => ({ ...s, shows: s.shows.filter(sh => sh.id !== id) }));
+    setState((s) => ({ ...s, shows: s.shows.filter((sh) => sh.id !== id) }));
   }, []);
 
   const refresh = useCallback(async (silent = false) => {
-    if (!silent) setState(s => ({ ...s, loading: true }));
+    if (!silent) setState((s) => ({ ...s, loading: true }));
     try {
       const endpoints = [
         api("/shows", { token }),
         api("/profile", { token }),
         api("/activity/today", { token })
       ];
-      
-      // Only fetch users if admin/superior
-      const isAdmin = user.role === "admin" || user.role === "superior";
-      if (isAdmin) {
-        endpoints.push(api("/users", { token }));
-      }
-      
+
+      // Only admins can list users.
+      const admin = isAdmin(user);
+      if (admin) endpoints.push(api("/users", { token }));
+
       const results = await Promise.all(endpoints);
-      
+
       setState({
         shows: results[0].shows,
         profile: results[1],
         activity: { status: results[2].status, summary: results[2].summary },
-        users: isAdmin ? results[3].users : [],
+        users: admin ? results[3].users : [],
         loading: false,
-        initialLoadDone: true
+        initialLoadDone: true,
+        error: ""
       });
     } catch (err) {
       console.error("Data refresh error:", err);
-      setState(s => ({ ...s, loading: false }));
+      setState((s) => ({ ...s, loading: false, error: err.message || "Could not load data" }));
     }
-  }, [token, user?.role]);
+  }, [token, user]);
 
   useEffect(() => {
-    if (token && user) {
-      refresh();
-    }
+    if (token && user) refresh();
   }, [token, user, refresh]);
 
-  const value = useMemo(() => ({
-    ...state,
-    refresh,
-    removeUser,
-    removeShow
-  }), [state, refresh, removeUser, removeShow]);
+  const value = useMemo(() => ({ ...state, refresh, removeUser, removeShow, token, user }), [state, refresh, removeUser, removeShow, token, user]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
 
+function useData() {
+  const context = useContext(DataContext);
+  if (!context) throw new Error("useData must be used within DataProvider");
+  return context;
+}
 
+/* ==========================================================================
+   UI: toasts + confirm dialog (replaces alert() / window.confirm())
+   ========================================================================== */
+
+const UIContext = createContext(null);
+const useUI = () => useContext(UIContext);
+
+function UIProvider({ children }) {
+  const [toasts, setToasts] = useState([]);
+  const [ask, setAsk] = useState(null);
+
+  const toast = useCallback((message, tone = "default") => {
+    const id = `${Date.now()}-${Math.random()}`;
+    setToasts((list) => [...list, { id, message, tone }]);
+    setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), 3200);
+  }, []);
+
+  const confirm = useCallback((options) => new Promise((resolve) => setAsk({ ...options, resolve })), []);
+
+  const answer = (value) => {
+    ask.resolve(value);
+    setAsk(null);
+  };
+
+  const value = useMemo(() => ({ toast, confirm }), [toast, confirm]);
+
+  return (
+    <UIContext.Provider value={value}>
+      {children}
+      {createPortal(
+        <>
+          <div className="toasts" aria-live="polite">
+            {toasts.map((t) => (
+              <div key={t.id} className={`toast ${t.tone === "error" ? "toast-error" : ""}`}>
+                {t.tone === "error" ? <WarningCircle size={18} weight="fill" /> : <CheckCircle size={18} weight="fill" className="text-[#7fd6a2]" />}
+                {t.message}
+              </div>
+            ))}
+          </div>
+          {ask && (
+            <>
+              <div className="scrim dialog-scrim" onClick={() => answer(false)} />
+              <div className="dialog" role="alertdialog" aria-modal="true" aria-label={ask.title}>
+                <h2 className="sheet-title">{ask.title}</h2>
+                {ask.body && <p className="mt-1.5 muted">{ask.body}</p>}
+                <div className="mt-5 flex justify-end gap-2">
+                  <button className="btn btn-secondary" onClick={() => answer(false)}>Cancel</button>
+                  <button
+                    className={`btn ${ask.danger ? "btn-danger-solid" : "btn-primary"}`}
+                    onClick={() => answer(true)}
+                    autoFocus
+                  >
+                    {ask.confirmLabel || "Confirm"}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </>,
+        document.body
+      )}
+    </UIContext.Provider>
+  );
+}
+
+/* ==========================================================================
+   APP
+   ========================================================================== */
 
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem("sunggeet-token") || "");
@@ -122,82 +202,65 @@ function App() {
 
   return (
     <DataProvider token={token} user={user}>
-      <AuthenticatedApp token={token} user={user} setToken={setToken} setUser={setUser} />
+      <AuthenticatedApp
+        user={user}
+        onLogout={() => {
+          localStorage.removeItem("sunggeet-token");
+          localStorage.removeItem("sunggeet-user");
+          setToken("");
+          setUser(null);
+        }}
+      />
     </DataProvider>
   );
 }
 
-function AuthenticatedApp({ token, user, setToken, setUser }) {
-  const [view, setView] = useState("dashboard");
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const { loading, refresh } = useContext(DataContext);
+function AuthenticatedApp({ user, onLogout }) {
+  const [route, setRoute] = useState({ view: "home", filter: null });
+  const { shows } = useData();
 
-  if (loading) return <DashboardSkeleton />;
+  const navigate = useCallback((view, filter = null) => {
+    setRoute({ view, filter });
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  // The number on the Shows tab: what needs doing next.
+  const showsBadge = useMemo(() => {
+    if (isStaff(user)) return pendingEntries(shows).length;
+    return shows.filter((s) => readyToMark(s)).length;
+  }, [shows, user]);
+
+  const { view, filter } = route;
 
   return (
-    <Shell
-      user={user}
-      view={view}
-      setView={setView}
-      mobileOpen={mobileOpen}
-      setMobileOpen={setMobileOpen}
-      onLogout={() => {
-        localStorage.removeItem("sunggeet-token");
-        localStorage.removeItem("sunggeet-user");
-        setToken("");
-        setUser(null);
-      }}
-    >
-      {view === "dashboard" && <Dashboard token={token} user={user} />}
-      {view === "shows" && (
-        <ShowsView token={token} user={user} onShowsChanged={refresh} />
-      )}
-      {view === "checkin" && <DailyCheckInView token={token} user={user} />}
-      {view === "profile" && <ProfileView token={token} user={user} />}
-      {view === "website" && (user.role === "admin" || user.role === "superior") && (
-        <WebsiteView token={token} />
-      )}
-      {view === "admin" && (user.role === "admin" || user.role === "superior") && (
-        <AdminView token={token} user={user} />
-      )}
-      {view === "data" && (user.role === "admin" || user.role === "superior") && (
-        <DataView />
-      )}
+    <Shell user={user} view={view} navigate={navigate} onLogout={onLogout} badges={{ shows: showsBadge }}>
+      {view === "home" && <HomePage user={user} navigate={navigate} />}
+      {view === "shows" && <ShowsPage key={filter || "all"} user={user} initialFilter={filter} />}
+      {view === "checkin" && <CheckInPage user={user} />}
+      {view === "activity" && <ActivityPage user={user} />}
+      {view === "team" && isAdmin(user) && <TeamPage user={user} />}
+      {view === "reports" && isAdmin(user) && <ReportsPage />}
+      {view === "website" && isAdmin(user) && <WebsitePage />}
     </Shell>
   );
 }
 
-function LoadingScreen() {
-  return (
-    <main className="grid min-h-[100dvh] place-items-center bg-ink text-slate-100">
-      <div className="w-80 space-y-4">
-        <div className="h-5 w-36 rounded bg-white/10 shimmer" />
-        <div className="h-28 rounded-xl border border-white/10 bg-white/[0.04] shimmer" />
-        <div className="grid grid-cols-3 gap-3">
-          <div className="h-16 rounded-lg bg-white/[0.04] shimmer" />
-          <div className="h-16 rounded-lg bg-white/[0.04] shimmer" />
-          <div className="h-16 rounded-lg bg-white/[0.04] shimmer" />
-        </div>
-      </div>
-    </main>
-  );
-}
+/* ==========================================================================
+   LOGIN
+   ========================================================================== */
 
 function LoginScreen({ onLogin }) {
   const [form, setForm] = useState({ username: "", password: "" });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [reveal, setReveal] = useState(false);
 
   const submit = async (event) => {
     event.preventDefault();
     setSubmitting(true);
     setError("");
-
     try {
-      const data = await api("/auth/login", {
-        method: "POST",
-        body: form
-      });
+      const data = await api("/auth/login", { method: "POST", body: form });
       onLogin({ nextToken: data.token, nextUser: data.user });
     } catch (requestError) {
       setError(requestError.message);
@@ -206,1225 +269,694 @@ function LoginScreen({ onLogin }) {
     }
   };
 
+  const devLogin = async (role) => {
+    setError("");
+    try {
+      const data = await api("/auth/dev-login", { method: "POST", body: { role } });
+      onLogin({ nextToken: data.token, nextUser: data.user });
+    } catch (err) {
+      setError(err.message === "Request failed" ? "Add DEV_LOGIN=1 to .env and restart the server" : err.message);
+    }
+  };
+
   return (
-    <main className="min-h-[100dvh] overflow-hidden bg-ink text-slate-100">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(212,141,70,0.14),transparent_34%)]" />
-      <section className="relative mx-auto grid min-h-[100dvh] max-w-7xl gap-10 px-5 py-8 md:grid-cols-[1.1fr_0.9fr] md:px-8">
-        <div className="flex flex-col justify-between">
-          <div className="flex items-center gap-3">
-            <div className="grid size-10 place-items-center rounded-xl border border-white/10 bg-white/[0.06] font-mono text-sm font-semibold">
-              SG
-            </div>
-            <div>
-              <p className="text-sm uppercase tracking-[0.32em] text-slate-400">SUNGGEET</p>
-              <p className="text-xs text-slate-500">Attendance and show operations</p>
-            </div>
-          </div>
-
-          <div className="max-w-2xl py-16 md:py-0">
-            <p className="mb-5 inline-flex rounded-full border border-white/10 bg-white/[0.05] px-4 py-2 text-sm text-slate-300">
-              Payroll-ready attendance for live music teams
-            </p>
-            <h1 className="text-5xl font-semibold leading-none tracking-tight text-white md:text-7xl">
-              Shows marked fast. Approvals kept clean.
-            </h1>
-            <p className="mt-6 max-w-xl text-base leading-7 text-slate-300">
-              Singers mark their assigned gigs once, managers approve from a focused table, and admins export the month into Excel for payroll.
-            </p>
-          </div>
-
-          <div className="hidden grid-cols-3 gap-3 pb-4 md:grid">
-            <Signal label="Marked today" value="2" />
-            <Signal label="Pending review" value="1" />
-            <Signal label="Venues live" value="4" />
-          </div>
+    <main className="login">
+      <div className="login-card">
+        <div className="mb-7 flex flex-col items-center text-center">
+          <span className="brand-mark !h-11 !w-11 !rounded-xl"><Logo size={22} /></span>
+          <h1 className="mt-4 text-[1.375rem] font-semibold tracking-tight">Sign in to SUNGGEET</h1>
+          <p className="mt-1 muted">Shows, attendance and pay for the team.</p>
         </div>
 
-        <form
-          onSubmit={submit}
-          className="self-center rounded-[1.25rem] border border-white/10 bg-slate-950/60 p-5 shadow-lift backdrop-blur-xl md:p-7"
-        >
-          <div className="mb-7">
-            <h2 className="text-2xl font-semibold tracking-tight">Login</h2>
-            <p className="mt-2 text-sm text-slate-400">Enter your credentials to access the dashboard.</p>
-          </div>
-
-          <div className="space-y-4 rounded-xl border border-white/10 bg-white/5 p-6 backdrop-blur-md">
-          <label className="block">
-            <span className="mb-2 block text-sm text-slate-300">Username</span>
+        <form onSubmit={submit} className="card card-pad space-y-4">
+          <Field label="Username">
             <input
-              type="text"
-              className="field"
-              placeholder="Enter your username"
+              className="input"
+              autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
               value={form.username}
-              onChange={(event) => setForm({ ...form, username: event.target.value })}
+              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              placeholder="name@sunggeet.com" inputMode="email"
             />
-          </label>
-
-          <label className="mt-4 block">
-            <span className="mb-2 block text-sm text-slate-300">Password</span>
-            <input
-              className="field"
-              type="password"
-              value={form.password}
-              onChange={(event) => setForm({ ...form, password: event.target.value })}
-            />
-          </label>
-          </div>
-
-          {import.meta.env.DEV && (
-            <div className="mt-4 rounded-xl border border-dashed border-indigo-400/30 p-4">
-              <p className="text-xs text-slate-400">Dev only · quick login (writes to the live database)</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {[["admin", "Admin"], ["manager", "Manager"], ["employee", "Singer"]].map(([role, label]) => (
-                  <button
-                    key={role}
-                    type="button"
-                    className="ghost-button"
-                    onClick={async () => {
-                      setError("");
-                      try {
-                        const data = await api("/auth/dev-login", { method: "POST", body: { role } });
-                        onLogin({ nextToken: data.token, nextUser: data.user });
-                      } catch (err) {
-                        setError(err.message.includes("404") || err.message === "Not found" ? "Add DEV_LOGIN=1 to .env and restart" : err.message);
-                      }
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+          </Field>
+          <Field label="Password">
+            <div className="relative">
+              <input
+                className="input pr-11"
+                type={reveal ? "text" : "password"}
+                autoComplete="current-password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+              />
+              <button
+                type="button"
+                className="icon-btn icon-btn-sm absolute right-1.5 top-1/2 -translate-y-1/2 muted"
+                onClick={() => setReveal((r) => !r)}
+                aria-label={reveal ? "Hide password" : "Show password"}
+              >
+                {reveal ? <EyeSlash size={17} /> : <Eye size={17} />}
+              </button>
             </div>
-          )}
+          </Field>
 
-          {error && <p className="mt-4 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p>}
+          {error && <p className="alert tone-bad">{error}</p>}
 
-          <button className="primary-button mt-6 w-full" disabled={submitting}>
-            {submitting ? "Checking account" : "Enter dashboard"}
+          <button className="btn btn-primary btn-block !min-h-11" disabled={submitting || !form.username || !form.password}>
+            {submitting ? "Signing in…" : "Sign in"}
           </button>
         </form>
-      </section>
-    </main>
-  );
-}
 
-function Signal({ label, value }) {
-  return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-      <p className="font-mono text-2xl text-white">{value}</p>
-      <p className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
-    </div>
-  );
-}
-
-function Shell({ children, user, view, setView, mobileOpen, setMobileOpen, onLogout }) {
-  const items = [
-    { id: "dashboard", label: "Dashboard", icon: House },
-    { id: "shows", label: "Shows", icon: CalendarBlank },
-    { id: "checkin", label: "Daily Check-in", icon: CheckCircle },
-    { id: "profile", label: "Profile", icon: UserCircle },
-    ...(user.role === "admin" || user.role === "superior" ? [
-      { id: "website", label: "Website", icon: Globe },
-      { id: "admin", label: "Admin", icon: GearSix },
-      { id: "data", label: "Data", icon: ChartBar }
-    ] : [])
-  ];
-
-  return (
-    <main className="min-h-[100dvh] bg-ink text-slate-100">
-           <div className="relative grid min-h-[100dvh] lg:grid-cols-[280px_1fr]">
-        {mobileOpen && (
-          <button
-            className="fixed inset-0 z-10 bg-slate-950/60 backdrop-blur-sm lg:hidden"
-            aria-label="Close menu"
-            onClick={() => setMobileOpen(false)}
-          />
-        )}
-        <aside className={`sidebar ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-lg font-semibold tracking-tight">SUNGGEET</p>
-              <p className="text-xs text-slate-500">Show management</p>
-            </div>
-            <button className="icon-button lg:hidden" onClick={() => setMobileOpen(false)}>
-              <X size={18} />
-            </button>
-          </div>
-
-          <nav className="mt-10 space-y-2">
-            {items.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  className={`nav-item ${view === item.id ? "nav-item-active" : ""}`}
-                  key={item.id}
-                  onClick={() => {
-                    setView(item.id);
-                    setMobileOpen(false);
-                  }}
-                >
-                  <Icon size={19} />
-                  {item.label}
+        {import.meta.env.DEV && (
+          <div className="mt-4 rounded-[14px] border border-dashed border-[var(--line-strong)] p-3">
+            <p className="text-xs muted">Dev only · quick sign-in (uses the live database)</p>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {[["admin", "Admin"], ["manager", "Manager"], ["employee", "Singer"]].map(([role, label]) => (
+                <button key={role} type="button" className="btn btn-secondary btn-sm" onClick={() => devLogin(role)}>
+                  {label}
                 </button>
-              );
-            })}
-          </nav>
-
-          <button className="nav-item mt-auto text-slate-400" onClick={onLogout}>
-            <SignOut size={19} />
-            Logout
-          </button>
-        </aside>
-
-        <section className="min-w-0 px-4 pb-28 pt-5 md:px-8 lg:pb-5">
-          <header className="mb-7 grid grid-cols-[auto_1fr_auto] items-center gap-3 sm:gap-4">
-            <button className="icon-button lg:hidden" onClick={() => setMobileOpen(true)}>
-              <List size={20} />
-            </button>
-            <div className="min-w-0">
-              <p className="text-sm capitalize text-slate-400">{user.role} workspace</p>
-              <h1 className="truncate text-xl font-semibold tracking-tight text-white sm:text-2xl md:text-3xl">
-                Good evening, {user.name.split(" ")[0]}
-              </h1>
-            </div>
-            <div className="flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-2 sm:px-3">
-              <div className="grid size-8 place-items-center rounded-full bg-indigoSoft/20 text-sm text-indigo-100">
-                {user.name.slice(0, 1)}
-              </div>
-              <div className="hidden sm:block">
-                <p className="text-sm text-white">{user.name}</p>
-                <p className="text-xs capitalize text-slate-500">{user.role}</p>
-              </div>
-            </div>
-          </header>
-          {children}
-        </section>
-      </div>
-      <MobileNav items={items} view={view} setView={setView} />
-    </main>
-  );
-}
-
-function MobileNav({ items, view, setView }) {
-  return (
-    <nav className="mobile-nav lg:hidden">
-      {items.map((item) => {
-        const Icon = item.icon;
-        return (
-          <button
-            className={`mobile-nav-item ${view === item.id ? "mobile-nav-item-active" : ""}`}
-            key={item.id}
-            onClick={() => setView(item.id)}
-          >
-            <Icon size={20} />
-            <span>{item.label}</span>
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
-
-function Dashboard({ token, user }) {
-  const { shows, profile, loading, refresh } = useWorkspaceData();
-
-  if (loading) return <DashboardSkeleton />;
-
-  const stats = profile?.stats || {};
-
-  return (
-    <div className="space-y-7">
-      <StatsGrid stats={stats} role={user.role} />
-      {user.role === "employee" ? (
-        <EmployeeShows shows={shows} token={token} onChanged={refresh} />
-      ) : (
-        <ManagerShows shows={shows} token={token} role={user.role} onChanged={refresh} />
-      )}
-    </div>
-  );
-}
-
-function ShowsView({ token, user }) {
-  const { shows, loading, refresh } = useWorkspaceData();
-
-  if (loading) return <DashboardSkeleton />;
-
-  return user.role === "employee" ? (
-    <EmployeeShows shows={shows} token={token} onChanged={refresh} />
-  ) : (
-    <ManagerShows shows={shows} token={token} role={user.role} onChanged={refresh} expanded />
-  );
-}
-
-function ProfileView({ token, user }) {
-  const { profile, loading } = useWorkspaceData();
-
-  if (loading) return <DashboardSkeleton />;
-
-  return (
-    <div className="space-y-7">
-      <StatsGrid stats={profile.stats} role={user.role} />
-      <section className="panel">
-        <div className="mb-5 grid gap-4 sm:flex sm:items-center sm:justify-between">
-          <div>
-            <h2 className="section-title">Recent activity</h2>
-            <p className="section-copy">Submitted attendance and manager decisions.</p>
-          </div>
-          {(user.role === "admin" || user.role === "superior") && <ExportButton token={token} />}
-        </div>
-        <div className="divide-y divide-white/10">
-          {profile.activity.length === 0 ? (
-            <EmptyState title="No attendance yet" copy="Marked shows will appear here after the first submission." />
-          ) : (
-            profile.activity.map((entry) => (
-              <div className="grid gap-3 py-4 md:grid-cols-[1fr_160px_160px]" key={entry.id}>
-                <div>
-                  <p className="font-medium text-white">{entry.show.location}</p>
-                  <p className="mt-1 text-sm text-slate-400">
-                    {formatDate(entry.show.date)} at {formatTime(entry.show.time)}
-                  </p>
-                </div>
-                <StatusBadge status={entry.status} />
-                <StatusBadge status={entry.approval_status} />
-              </div>
-            ))
-          )}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function AdminView({ token, user }) {
-  const { users, shows, loading, refresh, removeUser, removeShow } = useAdminData();
-  const managers = useMemo(() => users.filter((u) => u.role === "manager"), [users]);
-  const employees = useMemo(() => users.filter((u) => u.role === "employee"), [users]);
-  const [selectedShow, setSelectedShow] = useState(null);
-
-  const deleteUser = async (targetId, targetName) => {
-    if (!window.confirm(`Are you sure you want to delete ${targetName}? All their attendance records will be removed.`)) return;
-    
-    // Optimistic update
-    removeUser(targetId);
-    
-    try {
-      await api(`/users/${targetId}`, { token, method: "DELETE" });
-      refresh(true); // Silent refresh
-    } catch (err) {
-      alert(err.message);
-      refresh(); // Full refresh on error to restore state
-    }
-  };
-
-  const deleteShow = async (targetId, targetLocation) => {
-    if (!window.confirm(`Are you sure you want to delete the show at ${targetLocation} (${targetId})?`)) return;
-    
-    // Optimistic update
-    removeShow(targetId);
-    
-    try {
-      await api(`/shows/${targetId}`, { token, method: "DELETE" });
-      refresh(true); // Silent refresh
-    } catch (err) {
-      alert(err.message);
-      refresh(); // Full refresh on error to restore state
-    }
-  };
-
-  if (loading) return <DashboardSkeleton />;
-
-  return (
-    <div className="space-y-7">
-      <section className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
-        <MemberForm token={token} onCreated={() => refresh(true)} currentUser={user} />
-        <ShowForm token={token} managers={managers} employees={employees} onCreated={() => refresh(true)} />
-      </section>
-
-      <section className="grid gap-5 xl:grid-cols-2">
-        <AdminList
-          title="Team members"
-          copy={`${users.length} people in SUNGGEET`}
-          empty="Add your first team member from the form above."
-        >
-          {users.map((u) => (
-            <div className="admin-row group" key={u.id}>
-              <div className="min-w-0">
-                <h1 className="text-lg font-bold text-white truncate">{u.name}</h1>
-                <p className="text-sm text-slate-400 truncate">{u.username}</p>
-              </div>
-              <div className="flex items-center gap-3">
-                <StatusBadge status={u.role} />
-                {user.role === "admin" && u.id !== user.id && (
-                  <button
-                    onClick={() => deleteUser(u.id, u.name)}
-                    className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-400 transition-opacity hover:bg-rose-500/20 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"
-                    title="Delete user"
-                  >
-                    <Trash size={16} />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </AdminList>
-
-        <AdminList
-          title="Show roster"
-          copy={`${shows.length} shows scheduled — click to edit`}
-          empty="Create a show and it will appear here."
-        >
-          {shows.map((show) => (
-            <div className="admin-row group w-full" key={show.id}>
-              <button
-                className="flex-1 text-left min-w-0 transition-all cursor-pointer"
-                onClick={() => setSelectedShow(show)}
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-white">{show.location}</p>
-                  <p className="text-sm text-slate-400">
-                    {formatDate(show.date)} at {formatTime(show.time)}
-                  </p>
-                </div>
-              </button>
-              <div className="flex items-center gap-3">
-                <div className="text-right text-sm text-slate-400 hidden sm:block">
-                  <p>{show.manager.name}</p>
-                  <p>{show.employees.length} singers</p>
-                </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => setSelectedShow(show)}
-                    className="grid size-8 place-items-center rounded-lg bg-white/[0.04] text-slate-400 transition-opacity hover:bg-white/[0.08] [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"
-                    title="Edit show"
-                  >
-                    <PencilSimple size={16} />
-                  </button>
-                  {user.role === "admin" && (
-                    <button
-                      onClick={() => deleteShow(show.id, show.location)}
-                      className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-400 transition-opacity hover:bg-rose-500/20 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"
-                      title="Delete show"
-                    >
-                      <Trash size={16} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </AdminList>
-      </section>
-
-      {selectedShow && (
-        <ShowDetailModal
-          show={selectedShow}
-          token={token}
-          allEmployees={employees}
-          managers={managers}
-          onClose={() => setSelectedShow(null)}
-          onSaved={() => {
-            setSelectedShow(null);
-            refresh();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function ShowDetailModal({ show, token, allEmployees, managers, onClose, onSaved }) {
-  const [form, setForm] = useState({
-    date: show.date,
-    time: show.time,
-    location: show.location,
-    manager_id: show.manager.id,
-    employee_ids: show.employees.map((e) => e.id),
-    employee_pay: show.employee_pay || {}
-  });
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [expandedId, setExpandedId] = useState(null);
-
-  const toggleEmployee = (id) => {
-    setForm((current) => {
-      const newIds = current.employee_ids.includes(id)
-        ? current.employee_ids.filter((eid) => eid !== id)
-        : [...current.employee_ids, id];
-      const newPay = { ...current.employee_pay };
-      if (!newIds.includes(id)) {
-        delete newPay[String(id)];
-      }
-      return { ...current, employee_ids: newIds, employee_pay: newPay };
-    });
-  };
-
-  const setPay = (id, value) => {
-    setForm((current) => ({
-      ...current,
-      employee_pay: {
-        ...current.employee_pay,
-        [String(id)]: value === "" ? null : Number(value)
-      }
-    }));
-  };
-
-  const save = async () => {
-    setSubmitting(true);
-    setError("");
-    setMessage("");
-    try {
-      await api(`/shows/${show.id}`, {
-        token,
-        method: "PATCH",
-        body: {
-          date: form.date,
-          time: form.time,
-          location: form.location,
-          manager_id: Number(form.manager_id),
-          employee_ids: form.employee_ids.map(Number),
-          employee_pay: form.employee_pay
-        }
-      });
-      setMessage("Show updated successfully");
-      setTimeout(() => onSaved(), 600);
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const totalPay = Object.values(form.employee_pay).reduce((sum, v) => sum + (Number(v) || 0), 0);
-
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center modal-backdrop p-4" onClick={onClose}>
-      <div
-        className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto modal p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4 mb-6">
-          <div className="flex items-start gap-3">
-            <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-indigo-300/20 bg-indigo-500/12 text-indigo-100">
-              <PencilSimple size={20} />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold tracking-tight text-white">Edit show</h2>
-              <p className="text-sm text-slate-400">{show.id} — Update members and assign pay</p>
-            </div>
-          </div>
-          <button className="icon-button" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Show details */}
-        <div className="grid gap-4 md:grid-cols-2">
-          <TextField
-            label="Date"
-            type="date"
-            value={form.date}
-            onChange={(value) => setForm({ ...form, date: value })}
-          />
-          <TextField
-            label="Time"
-            type="time"
-            value={form.time}
-            onChange={(value) => setForm({ ...form, time: value })}
-          />
-          <div className="md:col-span-2">
-            <TextField
-              label="Location"
-              value={form.location}
-              onChange={(value) => setForm({ ...form, location: value })}
-            />
-          </div>
-          <label className="md:col-span-2">
-            <span className="mb-2 block text-sm text-slate-300">Manager</span>
-            <select
-              className="field"
-              value={form.manager_id}
-              onChange={(e) => setForm({ ...form, manager_id: e.target.value })}
-            >
-              {managers.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
               ))}
-            </select>
-          </label>
-        </div>
-
-        {/* Members + Pay */}
-        <div className="mt-6">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-medium text-slate-300">Assigned singers & pay</p>
-            {totalPay > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-200">
-                <CurrencyInr size={12} weight="bold" />
-                Total: ₹{totalPay.toLocaleString("en-IN")}
-              </span>
-            )}
+            </div>
           </div>
-          <div className="space-y-2">
-            {allEmployees.map((employee) => {
-              const isAssigned = form.employee_ids.includes(employee.id);
-              const isExpanded = expandedId === employee.id && isAssigned;
-              const payValue = form.employee_pay[String(employee.id)];
+        )}
 
-              return (
-                <div
-                  key={employee.id}
-                  className={`rounded-xl border transition-all ${
-                    isAssigned
-                      ? "border-indigo-400/20 bg-indigo-500/[0.06]"
-                      : "border-white/5 bg-white/[0.02]"
-                  }`}
-                >
-                  <div className="flex items-center gap-3 p-3">
-                    <input
-                      type="checkbox"
-                      checked={isAssigned}
-                      onChange={() => toggleEmployee(employee.id)}
-                      className="shrink-0"
-                    />
-                    <button
-                      className="flex flex-1 items-center gap-3 min-w-0 text-left"
-                      onClick={() => {
-                        if (isAssigned) {
-                          setExpandedId(isExpanded ? null : employee.id);
-                        }
-                      }}
-                    >
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-slate-300 shrink-0">
-                        {employee.name.charAt(0)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <span className="block truncate font-medium text-slate-200">{employee.name}</span>
-                        <span className="block text-xs text-slate-500">{employee.username}</span>
-                      </div>
-                    </button>
-                    {isAssigned && payValue != null && payValue !== "" && (
-                      <span className="inline-flex items-center gap-1 rounded-lg border border-amber-400/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-200 shrink-0">
-                        ₹{Number(payValue).toLocaleString("en-IN")}
-                      </span>
-                    )}
-                  </div>
-
-                  {isExpanded && (
-                    <div className="border-t border-white/5 px-3 py-3">
-                      <label className="flex items-center gap-2">
-                        <span className="text-sm text-slate-400 shrink-0">Pay (₹)</span>
-                        <div className="relative flex-1">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">₹</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="100"
-                            className="field pl-7 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            placeholder="0"
-                            value={payValue ?? ""}
-                            onChange={(e) => setPay(employee.id, e.target.value)}
-                          />
-                        </div>
-                      </label>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Feedback + Actions */}
-        <FormFeedback error={error} message={message} />
-        <div className="mt-6 flex justify-end gap-3">
-          <button className="ghost-button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="primary-button inline-flex items-center gap-2"
-            disabled={submitting || form.employee_ids.length === 0}
-            onClick={save}
-          >
-            <FloppyDisk size={18} />
-            {submitting ? "Saving…" : "Save changes"}
-          </button>
-        </div>
+        <p className="mt-6 text-center text-xs subtle">Forgot your password? Ask an admin to reset it.</p>
       </div>
-    </div>
+    </main>
   );
 }
 
-function DataView() {
-  const { users, shows, loading } = useAdminData();
-  const [selectedMonth, setSelectedMonth] = useState("");
+/* ==========================================================================
+   SHELL: sidebar on desktop, top bar + bottom tabs on phones
+   ========================================================================== */
 
-  const employees = useMemo(() => users.filter((u) => u.role === "employee"), [users]);
-
-  const months = useMemo(() => {
-    const unique = [...new Set(shows.map((s) => s.date.slice(0, 7)))];
-    return unique.sort().reverse();
-  }, [shows]);
-
-  useEffect(() => {
-    if (months.length > 0 && !selectedMonth) {
-      setSelectedMonth(months[0]);
-    }
-  }, [months, selectedMonth]);
-
-  const stats = useMemo(() => {
-    if (!selectedMonth) return [];
-
-    return employees.map((employee) => {
-      const monthlyShows = shows.filter((s) => s.date.startsWith(selectedMonth));
-      const attendedCount = monthlyShows.reduce((count, show) => {
-        const entry = show.attendance.find((a) => a.user_id === employee.id);
-        const hasAttended = entry && entry.approval_status === "approved";
-        return count + (hasAttended ? 1 : 0);
-      }, 0);
-
-      return {
-        id: employee.id,
-        name: employee.name,
-        username: employee.username,
-        attended: attendedCount
-      };
-    });
-  }, [employees, shows, selectedMonth]);
-
-  const formatMonthLabel = (m) => {
-    const [year, month] = m.split("-");
-    const d = new Date(parseInt(year), parseInt(month) - 1, 1);
-    return new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(d);
-  };
-
-  if (loading) return <DashboardSkeleton />;
-
-  return (
-    <div className="space-y-7">
-      <section className="panel">
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="section-title">Attendance data</h2>
-            <p className="section-copy">Show counts for each singer by month.</p>
-          </div>
-          <div className="flex flex-wrap gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-1">
-            {months.length === 0 ? (
-              <p className="px-3 py-1.5 text-xs text-slate-500">No shows found</p>
-            ) : (
-              months.map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setSelectedMonth(m)}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                    selectedMonth === m ? "bg-indigoSoft text-ink font-semibold" : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  {formatMonthLabel(m)}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="text-xs uppercase tracking-[0.18em] text-slate-500">
-              <tr className="border-b border-white/10">
-                <th className="py-3 pr-4 font-medium">Singer Name</th>
-                <th className="py-3 pr-4 font-medium text-right">Shows Attended</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/10">
-              {stats.length === 0 ? (
-                <tr>
-                  <td colSpan="2" className="py-10 text-center text-sm text-slate-500">
-                    No employees found or no data for this month.
-                  </td>
-                </tr>
-              ) : (
-                stats.map((row) => (
-                  <tr key={row.id}>
-                    <td className="py-4 pr-4">
-                      <p className="font-medium text-slate-200">{row.name}</p>
-                      <p className="text-xs text-slate-400">{row.username}</p>
-                    </td>
-                    <td className="py-4 pr-4 text-right">
-                      <span className="text-xl font-mono font-semibold text-indigo-100">
-                        {row.attended}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  );
+function navFor(user) {
+  const items = [
+    { id: "home", label: "Home", icon: House },
+    { id: "shows", label: "Shows", icon: CalendarBlank }
+  ];
+  if (isAdmin(user)) {
+    items.push(
+      { id: "team", label: "Team", icon: UsersThree },
+      { id: "website", label: "Website", icon: Globe },
+      { id: "reports", label: "Reports", icon: ChartBar },
+      { id: "checkin", label: "Check-in", icon: CalendarCheck },
+      { id: "activity", label: "Activity", icon: ClockCounterClockwise }
+    );
+  } else {
+    items.push(
+      { id: "checkin", label: "Check-in", icon: CalendarCheck },
+      { id: "activity", label: user.role === "employee" ? "History" : "Activity", icon: ClockCounterClockwise }
+    );
+  }
+  return items;
 }
 
-function DailyCheckInView({ token }) {
-  const { activity, loading, refresh } = useWorkspaceData();
-  const { status, summary } = activity;
-  const [submitting, setSubmitting] = useState(false);
+function Shell({ user, view, navigate, onLogout, badges, children }) {
+  const items = navFor(user);
+  const [sheet, setSheet] = useState(null); // "more" | "account"
+  const scrolled = useScrolled();
+  const primary = items.length > 5 ? items.slice(0, 4) : items;
+  const overflow = items.length > 5 ? items.slice(4) : [];
+  const current = items.find((item) => item.id === view);
 
-  const updateStatus = async (nextStatus) => {
-    setSubmitting(true);
-    try {
-      await api("/activity", {
-        token,
-        method: "POST",
-        body: { status: nextStatus }
-      });
-      // Silent refresh to update global state without full-screen loading
-      refresh(true);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setSubmitting(false);
-    }
+  const go = (id) => {
+    setSheet(null);
+    navigate(id);
   };
 
-  if (loading) return <DashboardSkeleton />;
-
   return (
-    <div className="space-y-7">
-      <section className="panel max-w-2xl">
-        <div className="mb-8">
-          <h2 className="text-2xl font-semibold tracking-tight">Today's Check-in</h2>
-          <p className="mt-2 text-slate-400">
-            Let the team know if you're active and available for shows today.
-          </p>
+    <div className="app">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-mark"><Logo /></span>
+          <span className="brand-name">SUNGGEET</span>
         </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <button
-            onClick={() => updateStatus("active")}
-            disabled={submitting}
-            className={`group relative flex flex-col items-center rounded-2xl border-2 p-6 text-center transition-all ${
-              status === "active"
-                ? "border-emerald-500/50 bg-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.1)]"
-                : "border-white/5 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.04]"
-            }`}
-          >
-            <div
-              className={`mb-4 grid size-14 place-items-center rounded-xl transition-colors ${
-                status === "active" ? "bg-emerald-500 text-white" : "bg-white/5 text-slate-400"
-              }`}
+        <nav className="nav" aria-label="Main">
+          {items.map((item) => (
+            <button
+              key={item.id}
+              className="nav-item"
+              aria-current={view === item.id ? "page" : undefined}
+              onClick={() => go(item.id)}
             >
-              <CheckCircle size={32} weight={status === "active" ? "fill" : "regular"} />
-            </div>
-            <p className={`text-lg font-semibold ${status === "active" ? "text-white" : "text-slate-300"}`}>
-              Active Today
-            </p>
-            <p className="mt-1 text-sm text-slate-500">I am available and working</p>
-            {status === "active" && (
-              <div className="absolute right-3 top-3 text-emerald-500">
-                <Check size={20} weight="bold" />
-              </div>
-            )}
-          </button>
-
-          <button
-            onClick={() => updateStatus("inactive")}
-            disabled={submitting}
-            className={`group relative flex flex-col items-center rounded-2xl border-2 p-6 text-center transition-all ${
-              status === "inactive"
-                ? "border-rose-500/50 bg-rose-500/10 shadow-[0_0_20px_rgba(244,63,94,0.1)]"
-                : "border-white/5 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.04]"
-            }`}
-          >
-            <div
-              className={`mb-4 grid size-14 place-items-center rounded-xl transition-colors ${
-                status === "inactive" ? "bg-rose-500 text-white" : "bg-white/5 text-slate-400"
-              }`}
-            >
-              <XCircle size={32} weight={status === "inactive" ? "fill" : "regular"} />
-            </div>
-            <p className={`text-lg font-semibold ${status === "inactive" ? "text-white" : "text-slate-300"}`}>
-              Not Active
-            </p>
-            <p className="mt-1 text-sm text-slate-500">I am off or unavailable</p>
-            {status === "inactive" && (
-              <div className="absolute right-3 top-3 text-rose-500">
-                <Check size={20} weight="bold" />
-              </div>
-            )}
+              <item.icon size={18} weight={view === item.id ? "fill" : "regular"} />
+              {item.label}
+              {badges[item.id] > 0 && <span className="nav-badge">{badges[item.id]}</span>}
+            </button>
+          ))}
+        </nav>
+        <div className="account">
+          <Avatar name={user.name} size="sm" />
+          <div className="min-w-0 flex-1">
+            <p className="row-title text-[13px]">{user.name}</p>
+            <p className="text-xs muted">{ROLE_LABEL[user.role]}</p>
+          </div>
+          <button className="icon-btn icon-btn-sm" onClick={onLogout} title="Log out" aria-label="Log out">
+            <SignOut size={16} />
           </button>
         </div>
-      </section>
+      </aside>
 
-      {summary && (
-        <section className="panel">
-          <div className="mb-6">
-            <h2 className="section-title">Team availability today</h2>
-            <p className="section-copy">Who has checked in so far.</p>
+      <main className="main">
+        <header className={`topbar ${scrolled ? "topbar-scrolled" : ""}`}>
+          <span className="brand-mark"><Logo /></span>
+          <span
+            className="min-w-0 flex-1 truncate text-[15px] font-semibold transition-opacity duration-150"
+            style={{ opacity: scrolled ? 1 : 0 }}
+          >
+            {current?.label}
+          </span>
+          <button className="icon-btn" onClick={() => setSheet("account")} aria-label="Account">
+            <Avatar name={user.name} size="sm" />
+          </button>
+        </header>
+        <div className="content">{children}</div>
+      </main>
+
+      <nav className="tabbar" aria-label="Main">
+        {primary.map((item) => (
+          <button
+            key={item.id}
+            className="tab"
+            aria-current={view === item.id ? "page" : undefined}
+            onClick={() => go(item.id)}
+          >
+            <item.icon size={22} weight={view === item.id ? "fill" : "regular"} />
+            {item.label}
+            {badges[item.id] > 0 && <span className="tab-dot">{badges[item.id]}</span>}
+          </button>
+        ))}
+        {overflow.length > 0 && (
+          <button
+            className="tab"
+            aria-current={overflow.some((item) => item.id === view) ? "page" : undefined}
+            onClick={() => setSheet("more")}
+          >
+            <DotsThreeOutline size={22} weight={overflow.some((item) => item.id === view) ? "fill" : "regular"} />
+            More
+          </button>
+        )}
+      </nav>
+
+      {sheet === "more" && (
+        <Sheet title="More" onClose={() => setSheet(null)} flush>
+          {overflow.map((item) => (
+            <button key={item.id} className="row" onClick={() => go(item.id)}>
+              <span className="thumb !border-0"><item.icon size={19} /></span>
+              <span className="row-main row-title">{item.label}</span>
+              <CaretRight size={16} className="subtle" />
+            </button>
+          ))}
+          <button className="row text-bad" onClick={onLogout}>
+            <span className="thumb !border-0 !text-bad"><SignOut size={19} /></span>
+            <span className="row-main row-title">Log out</span>
+          </button>
+        </Sheet>
+      )}
+
+      {sheet === "account" && (
+        <Sheet
+          title="Account"
+          onClose={() => setSheet(null)}
+          footer={
+            <button className="btn btn-danger" onClick={onLogout}>
+              <SignOut size={17} /> Log out
+            </button>
+          }
+        >
+          <div className="flex items-center gap-4">
+            <Avatar name={user.name} size="lg" />
+            <div className="min-w-0">
+              <p className="text-lg font-semibold tracking-tight">{user.name}</p>
+              <p className="muted">{user.username}</p>
+              <Pill tone="neutral" plain className="mt-2">{ROLE_LABEL[user.role]}</Pill>
+            </div>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {summary.length === 0 ? (
-              <p className="col-span-full py-10 text-center text-sm text-slate-500">
-                No one has checked in yet today.
-              </p>
-            ) : (
-              summary.map((entry) => (
-                <div key={entry.user.id} className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] p-3">
-                  <div className={`grid size-10 place-items-center rounded-lg ${
-                    entry.status === 'active' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
-                  }`}>
-                    {entry.status === 'active' ? <CheckCircle size={24} weight="fill" /> : <XCircle size={24} weight="fill" />}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-white">{entry.user.name}</p>
-                    <p className="text-[10px] uppercase tracking-wider text-slate-500">{entry.user.role}</p>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
+        </Sheet>
       )}
     </div>
   );
 }
 
-function MemberForm({ token, onCreated, currentUser }) {
-  const [form, setForm] = useState({
-    name: "",
-    username: "",
-    password: "",
-    role: "employee"
-  });
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+/* ==========================================================================
+   HOME
+   ========================================================================== */
 
-  const submit = async (event) => {
-    event.preventDefault();
-    setSubmitting(true);
-    setError("");
-    setMessage("");
-
-    try {
-      const data = await api("/users", {
-        token,
-        method: "POST",
-        body: form
-      });
-      setMessage(`${data.user.name} added as ${data.user.role}`);
-      setForm({ name: "", username: "", password: "", role: "employee" });
-      if (onCreated) onCreated();
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <form className="panel" onSubmit={submit}>
-      <FormHeader icon={UserPlus} title="Add member" copy="Create singer, manager, or admin accounts." />
-      <div className="mt-5 grid gap-4">
-        <TextField
-          label="Full name"
-          value={form.name}
-          onChange={(value) => setForm({ ...form, name: value })}
-          placeholder="Ishaan Arora"
-        />
-        <TextField
-          label="Username"
-          type="text"
-          value={form.username}
-          onChange={(value) => setForm({ ...form, username: value })}
-        />
-        <TextField
-          label="Temporary password"
-          value={form.password}
-          onChange={(value) => setForm({ ...form, password: value })}
-          placeholder="Type a password here"
-        />
-        <label>
-          <span className="mb-2 block text-sm text-slate-300">Role</span>
-          <select
-            className="field"
-            value={form.role}
-            onChange={(event) => setForm({ ...form, role: event.target.value })}
-          >
-            <option value="employee">Employee singer</option>
-            <option value="manager">Manager</option>
-            <option value="admin">Admin</option>
-            {currentUser?.role === "admin" && (
-              <option value="superior">Superior</option>
-            )}
-          </select>
-        </label>
-      </div>
-      <FormFeedback error={error} message={message} />
-      <button className="primary-button mt-5 inline-flex items-center gap-2" disabled={submitting}>
-        <Plus size={18} />
-        {submitting ? "Adding member" : "Add member"}
-      </button>
-    </form>
-  );
-}
-
-function ShowForm({ token, managers, employees, onCreated }) {
-  const [form, setForm] = useState({
-    date: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()),
-    time: "19:30",
-    location: "",
-    manager_id: managers[0]?.id || "",
-    employee_ids: employees.slice(0, 2).map((employee) => employee.id)
-  });
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    setForm((current) => ({
-      ...current,
-      manager_id: current.manager_id || managers[0]?.id || "",
-      employee_ids: current.employee_ids.length
-        ? current.employee_ids
-        : employees.slice(0, 2).map((employee) => employee.id)
-    }));
-  }, [employees, managers]);
-
-  const toggleEmployee = (id) => {
-    setForm((current) => ({
-      ...current,
-      employee_ids: current.employee_ids.includes(id)
-        ? current.employee_ids.filter((employeeId) => employeeId !== id)
-        : [...current.employee_ids, id]
-    }));
-  };
-
-  const submit = async (event) => {
-    event.preventDefault();
-    setSubmitting(true);
-    setError("");
-    setMessage("");
-
-    try {
-      const data = await api("/shows", {
-        token,
-        method: "POST",
-        body: {
-          ...form,
-          manager_id: Number(form.manager_id),
-          employee_ids: form.employee_ids.map(Number)
-        }
-      });
-      setMessage(`${data.show.location} scheduled as ${data.show.id}`);
-      setForm((current) => ({ ...current, location: "" }));
-      onCreated();
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <form className="panel" onSubmit={submit}>
-      <FormHeader icon={CalendarBlank} title="Add show" copy="Assign one manager and one or more singers." />
-      <div className="mt-5 grid gap-4 md:grid-cols-2">
-        <TextField
-          label="Date"
-          type="date"
-          value={form.date}
-          onChange={(value) => setForm({ ...form, date: value })}
-        />
-        <TextField
-          label="Time"
-          type="time"
-          value={form.time}
-          onChange={(value) => setForm({ ...form, time: value })}
-        />
-        <div className="md:col-span-2">
-          <TextField
-            label="Location"
-            value={form.location}
-            onChange={(value) => setForm({ ...form, location: value })}
-            placeholder="Bandra Social Rooftop"
-          />
-        </div>
-        <label className="md:col-span-2">
-          <span className="mb-2 block text-sm text-slate-300">Manager</span>
-          <select
-            className="field"
-            value={form.manager_id}
-            onChange={(event) => setForm({ ...form, manager_id: event.target.value })}
-          >
-            {managers.map((manager) => (
-              <option key={manager.id} value={manager.id}>
-                {manager.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <div className="mt-5">
-        <p className="mb-2 text-sm text-slate-300">Assigned singers</p>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {employees.map((employee) => (
-            <label className="check-row" key={employee.id}>
-              <input
-                type="checkbox"
-                checked={form.employee_ids.includes(employee.id)}
-                onChange={() => toggleEmployee(employee.id)}
-              />
-              <div className="flex items-center gap-3 truncate">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-slate-300">
-                  {employee.name.charAt(0)}
-                </div>
-                <div className="truncate">
-                  <span className="block truncate font-medium text-slate-200">{employee.name}</span>
-                  <span className="block text-xs text-slate-500">{employee.username}</span>
-                </div>
-              </div>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      <FormFeedback error={error} message={message} />
-      <button className="primary-button mt-5 inline-flex items-center gap-2" disabled={submitting}>
-        <Plus size={18} />
-        {submitting ? "Creating show" : "Create show"}
-      </button>
-    </form>
-  );
-}
-
-function AdminList({ title, copy, empty, children }) {
-  return (
-    <section className="panel">
-      <div className="mb-4">
-        <h2 className="section-title">{title}</h2>
-        <p className="section-copy">{copy}</p>
-      </div>
-      <div className="divide-y divide-white/10">
-        {React.Children.count(children) ? children : <p className="py-5 text-sm text-slate-400">{empty}</p>}
-      </div>
-    </section>
-  );
-}
-
-function FormHeader({ icon, title, copy }) {
-  return (
-    <div className="flex items-start gap-3">
-      <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-indigo-300/20 bg-indigo-500/12 text-indigo-100">
-        {React.createElement(icon, { size: 20 })}
-      </div>
-      <div>
-        <h2 className="section-title">{title}</h2>
-        <p className="section-copy">{copy}</p>
-      </div>
-    </div>
-  );
-}
-
-function TextField({ label, value, onChange, placeholder = "", type = "text" }) {
-  return (
-    <label>
-      <span className="mb-2 block text-sm text-slate-300">{label}</span>
-      <input
-        className="field"
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </label>
-  );
-}
-
-function FormFeedback({ error, message }) {
-  if (error) {
-    return (
-      <p className="mt-4 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-        {error}
-      </p>
-    );
-  }
-
-  if (message) {
-    return (
-      <p className="mt-4 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
-        {message}
-      </p>
-    );
-  }
-
-  return null;
-}
-
-function StatsGrid({ stats, role }) {
-  const cards = [
-    { label: role === "manager" ? "Shows managed" : "Total shows", value: stats.totalShows ?? 0 },
-    { label: "Approved shows", value: stats.approvedShows ?? 0 },
-    { label: "Pending shows", value: stats.pendingShows ?? 0 },
-    { label: role === "employee" ? "Rejected shows" : "Approvals done", value: role === "employee" ? stats.rejectedShows ?? 0 : stats.approvalsDone ?? 0 }
-  ];
-
-  return (
-    <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-      {cards.map((card, index) => (
-        <div className="stat-card" style={{ animationDelay: `${index * 70}ms` }} key={card.label}>
-          <p className="text-3xl font-semibold tracking-tight text-white tabular-nums">{card.value}</p>
-          <p className="mt-2 text-sm text-slate-400">{card.label}</p>
-        </div>
-      ))}
-    </section>
-  );
-}
-
-function EmployeeShows({ shows, token, onChanged }) {
-  const [selectedShow, setSelectedShow] = useState(null);
-  const [selectedMonth, setSelectedMonth] = useState(() => defaultMonth(shows));
-  
-  const filteredShows = useMemo(() => 
-    selectedMonth ? shows.filter(s => s.date.startsWith(selectedMonth)) : shows
-  , [shows, selectedMonth]);
-
-  const grouped = useMemo(() => groupByDate(filteredShows), [filteredShows]);
+function HomePage({ user, navigate }) {
+  const { initialLoadDone, error } = useData();
+  if (!initialLoadDone) return error ? <LoadError /> : <PageSkeleton />;
 
   return (
     <>
-      <MonthFilter shows={shows} selectedMonth={selectedMonth} onSelect={setSelectedMonth} />
-      <section className="space-y-6">
-        {Object.keys(grouped).length === 0 ? (
-          <EmptyState title="No assigned shows" copy="Your show schedule will appear here when a manager assigns you." />
-        ) : (
-          Object.entries(grouped).map(([date, dateShows]) => (
-            <div key={date}>
-              <h2 className="section-title">{formatDate(date)}</h2>
-              <div className="mt-3 grid gap-3 xl:grid-cols-2">
-                {dateShows.map((show) => (
-                  <ShowCard
-                    key={show.id}
-                    show={show}
-                    // Already marked (the API only sends this singer's own entry)
-                    onClick={show.attendance.length ? undefined : () => setSelectedShow(show)}
-                  />
-                ))}
+      <PageHead
+        title={`${greeting()}, ${user.name.split(" ")[0]}`}
+        sub={fmtDate(todayIST(), { weekday: "long", day: "numeric", month: "long" })}
+      />
+      <div className="space-y-4 lg:space-y-6">
+        {isStaff(user) ? <StaffHome user={user} navigate={navigate} /> : <SingerHome user={user} navigate={navigate} />}
+      </div>
+    </>
+  );
+}
+
+function StaffHome({ user, navigate }) {
+  const { shows, activity } = useData();
+  const [openId, setOpenId] = useState(null);
+  const month = todayIST().slice(0, 7);
+  const monthShows = shows.filter((s) => s.date.startsWith(month));
+  const pending = pendingEntries(shows);
+  const upcoming = shows.filter((s) => !hasStarted(s)).slice(0, 5);
+  const approvedThisMonth = monthShows.reduce((n, s) => n + s.attendance.filter((a) => a.approval_status === "approved").length, 0);
+  const availableToday = (activity.summary || []).filter((a) => a.status === "active").length;
+  const openShow = shows.find((s) => s.id === openId);
+
+  return (
+    <>
+      <div className="kpis">
+        <Kpi label="Shows this month" value={monthShows.length} foot={monthLabel(month)} />
+        <Kpi label="To review" value={pending.length} foot={pending.length ? "Waiting on you" : "All caught up"} />
+        <Kpi label="Approved this month" value={approvedThisMonth} foot="Attendance entries" />
+        <Kpi label="Available today" value={availableToday} foot="From check-ins" />
+      </div>
+
+      <div className="grid items-start gap-4 lg:grid-cols-[1.35fr_1fr] lg:gap-6">
+        <section className="card">
+          <div className="card-head">
+            <h2 className="card-title flex items-center gap-2">
+              Needs review
+              {pending.length > 0 && <span className="pill pill-plain tone-brand">{pending.length}</span>}
+            </h2>
+            {pending.length > 0 && (
+              <button className="btn btn-ghost btn-sm" onClick={() => navigate("shows", "review")}>
+                View all <ArrowRight size={14} />
+              </button>
+            )}
+          </div>
+          {pending.length === 0 ? (
+            <Empty icon={Tray} title="You're all caught up" copy="New attendance shows up here as singers mark it." />
+          ) : (
+            pending.slice(0, 6).map(({ show, entry }) => (
+              <ReviewRow key={entry.id} show={show} entry={entry} onOpen={() => setOpenId(show.id)} />
+            ))
+          )}
+        </section>
+
+        <section className="card">
+          <div className="card-head">
+            <h2 className="card-title">Coming up</h2>
+            <button className="btn btn-ghost btn-sm" onClick={() => navigate("shows", "upcoming")}>
+              All shows <ArrowRight size={14} />
+            </button>
+          </div>
+          {upcoming.length === 0 ? (
+            <Empty icon={CalendarBlank} title="Nothing scheduled" copy="Upcoming shows will be listed here." />
+          ) : (
+            upcoming.map((show) => <AgendaRow key={show.id} show={show} onClick={() => setOpenId(show.id)} />)
+          )}
+        </section>
+      </div>
+
+      <CheckInCard />
+
+      {openShow && <ShowSheet show={openShow} user={user} onClose={() => setOpenId(null)} />}
+    </>
+  );
+}
+
+function SingerHome({ user, navigate }) {
+  const { shows } = useData();
+  const [openId, setOpenId] = useState(null);
+  const month = todayIST().slice(0, 7);
+  const monthShows = shows.filter((s) => s.date.startsWith(month));
+  const ready = shows.filter((s) => readyToMark(s));
+  const upcoming = shows.filter((s) => !hasStarted(s)).slice(0, 5);
+  const awaiting = shows.filter((s) => s.attendance[0]?.approval_status === "pending").length;
+  const approved = monthShows.filter((s) => s.attendance[0]?.approval_status === "approved");
+  const earned = approved.reduce((sum, s) => sum + (Number(myPay(s, user)) || 0), 0);
+  const openShow = shows.find((s) => s.id === openId);
+
+  return (
+    <>
+      {ready.length > 0 && (
+        <section className="card overflow-hidden !border-[#ecd2b7]">
+          <div className="card-head !border-[#f1dfcc] bg-brand-soft">
+            <h2 className="card-title flex items-center gap-2 text-[var(--brand-ink)]">
+              <MusicNotes size={18} weight="fill" /> Ready to mark
+            </h2>
+            <span className="text-xs font-medium text-[var(--brand-ink)]">{ready.length} show{ready.length > 1 ? "s" : ""}</span>
+          </div>
+          {ready.map((show) => (
+            <div key={show.id} className="row">
+              <DateTile date={show.date} />
+              <div className="row-main">
+                <p className="row-title">{show.location}</p>
+                <p className="row-sub">{dayLabel(show.date)} · {formatTime(show.time)}</p>
               </div>
+              <button className="btn btn-brand btn-sm" onClick={() => setOpenId(show.id)}>Mark</button>
             </div>
+          ))}
+        </section>
+      )}
+
+      <div className="kpis">
+        <Kpi label="Shows this month" value={monthShows.length} foot={monthLabel(month)} />
+        <Kpi label="Approved this month" value={approved.length} foot="Counted for pay" />
+        <Kpi label="Awaiting approval" value={awaiting} foot="Manager to confirm" />
+        <Kpi label="Earned this month" value={inr(earned)} foot="Approved shows only" />
+      </div>
+
+      <div className="grid items-start gap-4 lg:grid-cols-[1.35fr_1fr] lg:gap-6">
+        <section className="card">
+          <div className="card-head">
+            <h2 className="card-title">Coming up</h2>
+            <button className="btn btn-ghost btn-sm" onClick={() => navigate("shows")}>
+              All shows <ArrowRight size={14} />
+            </button>
+          </div>
+          {upcoming.length === 0 ? (
+            <Empty icon={CalendarBlank} title="No upcoming shows" copy="Shows you're assigned to will appear here." />
+          ) : (
+            upcoming.map((show) => <AgendaRow key={show.id} show={show} onClick={() => setOpenId(show.id)} pay={myPay(show, user)} />)
+          )}
+        </section>
+        <CheckInCard />
+      </div>
+
+      {openShow && <ShowSheet show={openShow} user={user} onClose={() => setOpenId(null)} />}
+    </>
+  );
+}
+
+/* One pending attendance entry with inline approve / reject. */
+function ReviewRow({ show, entry, onOpen }) {
+  const review = useReview();
+  const [busy, setBusy] = useState(false);
+  const name = entry.employee?.name || "Singer";
+
+  const decide = async (status) => {
+    setBusy(true);
+    await review(entry, status, name);
+    setBusy(false);
+  };
+
+  return (
+    <div className="row">
+      <Avatar name={name} />
+      <button className="row-main text-left" onClick={onOpen}>
+        <p className="row-title">{name}</p>
+        <p className="row-sub">{show.location} · {dayLabel(show.date)}, {formatTime(show.time)}</p>
+      </button>
+      <div className="flex gap-1.5">
+        <button className="decide decide-bad" disabled={busy} onClick={() => decide("rejected")} aria-label={`Reject ${name}`} title="Reject">
+          <X size={18} weight="bold" />
+        </button>
+        <button className="decide decide-ok" disabled={busy} onClick={() => decide("approved")} aria-label={`Approve ${name}`} title="Approve">
+          <Check size={18} weight="bold" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AgendaRow({ show, onClick, pay }) {
+  return (
+    <button className="row" onClick={onClick}>
+      <DateTile date={show.date} />
+      <div className="row-main">
+        <p className="row-title">{show.location}</p>
+        <p className="row-sub">
+          {dayLabel(show.date)} · {formatTime(show.time)} · {plural(show.employees.length, "singer")}
+        </p>
+      </div>
+      {pay != null && <span className="text-[13px] font-medium muted">{inr(pay)}</span>}
+      <CaretRight size={16} className="subtle" />
+    </button>
+  );
+}
+
+/* ==========================================================================
+   CHECK-IN
+   ========================================================================== */
+
+function CheckInCard() {
+  const { activity } = useData();
+  const setStatus = useCheckIn();
+  const [busy, setBusy] = useState(false);
+  const status = activity.status;
+
+  const choose = async (next) => {
+    setBusy(true);
+    await setStatus(next);
+    setBusy(false);
+  };
+
+  return (
+    <section className="card card-pad">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="card-title">Are you available today?</h2>
+          <p className="mt-0.5 text-[13px] muted">
+            {status === "active" ? "You're marked available." : status === "inactive" ? "You're marked off today." : "Let the team know before shows are planned."}
+          </p>
+        </div>
+        <div className="seg" role="group" aria-label="Today's availability">
+          <button aria-pressed={status === "active"} disabled={busy} onClick={() => choose("active")}>Available</button>
+          <button aria-pressed={status === "inactive"} disabled={busy} onClick={() => choose("inactive")}>Off today</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CheckInPage({ user }) {
+  const { activity, users, initialLoadDone, error } = useData();
+  const setStatus = useCheckIn();
+  const [busy, setBusy] = useState(false);
+
+  if (!initialLoadDone) return error ? <LoadError /> : <PageSkeleton />;
+
+  const { status, summary } = activity;
+  const choose = async (next) => {
+    setBusy(true);
+    await setStatus(next);
+    setBusy(false);
+  };
+
+  const available = (summary || []).filter((a) => a.status === "active");
+  const off = (summary || []).filter((a) => a.status === "inactive");
+  const checkedIn = new Set((summary || []).map((a) => a.user.id));
+  const missing = users.filter((u) => !checkedIn.has(u.id));
+
+  return (
+    <>
+      <PageHead title="Check-in" sub={fmtDate(todayIST(), { weekday: "long", day: "numeric", month: "long" })} />
+      <div className="grid items-start gap-4 lg:grid-cols-[1fr_1.2fr] lg:gap-6">
+        <section className="card card-pad">
+          <h2 className="card-title">Your status today</h2>
+          <p className="mt-0.5 text-[13px] muted">Managers use this when planning shows. You can change it any time today.</p>
+          <div className="mt-4 grid gap-2.5">
+            <button className="choice choice-ok" aria-pressed={status === "active"} disabled={busy} onClick={() => choose("active")}>
+              <span className="choice-dot">{status === "active" && <Check size={12} weight="bold" />}</span>
+              <span>
+                <span className="block font-semibold">Available</span>
+                <span className="block text-[13px] muted">I'm free to perform today</span>
+              </span>
+            </button>
+            <button className="choice choice-bad" aria-pressed={status === "inactive"} disabled={busy} onClick={() => choose("inactive")}>
+              <span className="choice-dot">{status === "inactive" && <Check size={12} weight="bold" />}</span>
+              <span>
+                <span className="block font-semibold">Off today</span>
+                <span className="block text-[13px] muted">I'm not available</span>
+              </span>
+            </button>
+          </div>
+        </section>
+
+        {summary && (
+          <section className="card">
+            <div className="card-head">
+              <h2 className="card-title">Team today</h2>
+              <span className="text-[13px] muted">{available.length} available</span>
+            </div>
+            {summary.length === 0 && missing.length === 0 ? (
+              <Empty icon={UsersThree} title="No check-ins yet" copy="People appear here as they check in." />
+            ) : (
+              <>
+                <PeopleGroup title="Available" people={available.map((a) => a.user)} tone="ok" label="Available" />
+                <PeopleGroup title="Off today" people={off.map((a) => a.user)} tone="bad" label="Off" />
+                {isAdmin(user) && <PeopleGroup title="Not checked in" people={missing} tone="neutral" label="No reply" />}
+              </>
+            )}
+          </section>
+        )}
+      </div>
+    </>
+  );
+}
+
+function PeopleGroup({ title, people, tone, label }) {
+  if (!people.length) return null;
+  return (
+    <>
+      <div className="group-head">
+        <span>{title}</span>
+        <span className="font-medium subtle">{people.length}</span>
+      </div>
+      {people.map((person) => (
+        <div key={person.id} className="row !min-h-[3.25rem]">
+          <Avatar name={person.name} size="sm" />
+          <div className="row-main">
+            <p className="row-title">{person.name}</p>
+          </div>
+          <span className="text-xs muted">{ROLE_LABEL[person.role]}</span>
+          <Pill tone={tone}>{label}</Pill>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function useCheckIn() {
+  const { token, refresh } = useData();
+  const { toast } = useUI();
+  return useCallback(async (status) => {
+    try {
+      await api("/activity", { token, method: "POST", body: { status } });
+      await refresh(true);
+      toast(status === "active" ? "Marked available for today" : "Marked off for today");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }, [token, refresh, toast]);
+}
+
+/* ==========================================================================
+   SHOWS
+   ========================================================================== */
+
+function ShowsPage({ user, initialFilter }) {
+  const { shows, users, initialLoadDone, error } = useData();
+  const staff = isStaff(user);
+  const admin = isAdmin(user);
+  const [month, setMonth] = useState(() => defaultMonth(shows));
+  const [filter, setFilter] = useState(initialFilter || "all");
+  const [openId, setOpenId] = useState(null);
+  const [sheet, setSheet] = useState(null); // "new" | "copy"
+
+  const months = useMemo(() => {
+    const set = new Set(shows.map((s) => s.date.slice(0, 7)));
+    set.add(todayIST().slice(0, 7));
+    return [...set].sort();
+  }, [shows]);
+
+  if (!initialLoadDone) return error ? <LoadError /> : <PageSkeleton />;
+
+  const activeMonth = months.includes(month) ? month : months.at(-1);
+  const monthShows = shows.filter((s) => s.date.startsWith(activeMonth));
+
+  // "To review" / "To mark" look across every month: old work shouldn't hide.
+  const filters = staff
+    ? [
+        { id: "all", label: "All", list: monthShows },
+        { id: "review", label: "To review", list: shows.filter((s) => s.attendance.some((a) => a.approval_status === "pending")), global: true },
+        { id: "upcoming", label: "Upcoming", list: monthShows.filter((s) => !hasStarted(s)) }
+      ]
+    : [
+        { id: "all", label: "All", list: monthShows },
+        { id: "mark", label: "To mark", list: shows.filter((s) => readyToMark(s)), global: true },
+        { id: "upcoming", label: "Upcoming", list: monthShows.filter((s) => !hasStarted(s)) }
+      ];
+  const current = filters.find((f) => f.id === filter) || filters[0];
+  const groups = groupByDate(current.list);
+  const openShow = shows.find((s) => s.id === openId);
+  const managers = users.filter((u) => u.role === "manager");
+  const singers = users.filter((u) => u.role === "employee");
+
+  return (
+    <>
+      <PageHead
+        title="Shows"
+        sub={staff ? "Schedule, line-ups and attendance approvals." : "Your schedule and attendance."}
+        actions={admin && (
+          <>
+            {monthShows.length > 0 && (
+              <button className="btn btn-secondary" onClick={() => setSheet("copy")} title="Copy this month's shows to another month">
+                <Copy size={16} /> Copy month
+              </button>
+            )}
+            <button className="btn btn-primary desktop-only" onClick={() => setSheet("new")}>
+              <Plus size={16} weight="bold" /> New show
+            </button>
+          </>
+        )}
+      />
+
+      <div className="mb-3 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="chips">
+          {filters.map((f) => (
+            <button key={f.id} className={`chip ${current.id === f.id ? "chip-on" : ""}`} onClick={() => setFilter(f.id)}>
+              {f.label}
+              {f.id !== "all" && <span className="chip-count">{f.list.length}</span>}
+            </button>
+          ))}
+        </div>
+        {!current.global && (
+          <MonthStepper months={months} value={activeMonth} onChange={setMonth} />
+        )}
+      </div>
+
+      <section className="card overflow-hidden">
+        {current.list.length === 0 ? (
+          <Empty
+            icon={current.id === "all" ? CalendarBlank : CheckCircle}
+            title={current.id === "all" ? `No shows in ${monthLabel(activeMonth)}` : current.id === "upcoming" ? "No upcoming shows" : "Nothing left to do"}
+            copy={current.id === "all" ? (admin ? "Add a show or pick another month." : "Pick another month to see more.") : "You're all caught up."}
+            action={admin && current.id === "all" && (
+              <button className="btn btn-secondary btn-sm mt-3" onClick={() => setSheet("new")}><Plus size={14} /> New show</button>
+            )}
+          />
+        ) : (
+          Object.entries(groups).map(([date, dayShows]) => (
+            <React.Fragment key={date}>
+              <div className="group-head">
+                <span>{dayLabel(date)}{current.global ? ` · ${fmtDate(date, { year: "numeric" })}` : ""}</span>
+                <span className="font-medium subtle">{plural(dayShows.length, "show")}</span>
+              </div>
+              {dayShows.map((show) => (
+                <ShowRow key={show.id} show={show} user={user} onClick={() => setOpenId(show.id)} />
+              ))}
+            </React.Fragment>
           ))
         )}
       </section>
-      {selectedShow && (
-        <ConfirmAttendanceModal
-          show={selectedShow}
-          token={token}
-          onClose={() => setSelectedShow(null)}
-          onDone={() => {
-            setSelectedShow(null);
-            onChanged(true);
+
+      {admin && (
+        <button className="fab" onClick={() => setSheet("new")} aria-label="New show">
+          <Plus size={24} weight="bold" />
+        </button>
+      )}
+
+      {openShow && <ShowSheet show={openShow} user={user} onClose={() => setOpenId(null)} />}
+      {sheet === "new" && (
+        <ShowEditor
+          managers={managers}
+          singers={singers}
+          onClose={() => setSheet(null)}
+          onSaved={(saved) => {
+            setSheet(null);
+            if (saved?.date) setMonth(saved.date.slice(0, 7));
+          }}
+        />
+      )}
+      {sheet === "copy" && (
+        <CopyMonthSheet
+          shows={monthShows}
+          sourceMonth={activeMonth}
+          onClose={() => setSheet(null)}
+          onDone={(target) => {
+            setSheet(null);
+            setMonth(target);
           }}
         />
       )}
@@ -1432,292 +964,405 @@ function EmployeeShows({ shows, token, onChanged }) {
   );
 }
 
-function ManagerShows({ shows, token, role, onChanged, expanded = false }) {
-  const [selectedMonth, setSelectedMonth] = useState(() => defaultMonth(shows));
-  const [showCloneModal, setShowCloneModal] = useState(false);
-  
-  const filteredShows = useMemo(() => 
-    selectedMonth ? shows.filter(s => s.date.startsWith(selectedMonth)) : shows
-  , [shows, selectedMonth]);
+function ShowRow({ show, user, onClick }) {
+  const state = isStaff(user) ? staffState(show) : singerState(show);
+  return (
+    <button className="row" onClick={onClick}>
+      <span className="time-col">{formatTime(show.time)}</span>
+      <div className="row-main">
+        <p className="row-title">{show.location}</p>
+        <div className="mt-1 flex min-w-0 items-center gap-2">
+          <Pill tone={state.tone}>{state.label}</Pill>
+          <span className="row-sub !mt-0">
+            {isStaff(user)
+              ? `${show.manager?.name || "No manager"} · ${plural(show.employees.length, "singer")}`
+              : `${show.manager?.name || "No manager"}${myPay(show, user) != null ? ` · ${inr(myPay(show, user))}` : ""}`}
+          </span>
+        </div>
+      </div>
+      <CaretRight size={16} className="subtle" />
+    </button>
+  );
+}
 
-  const [activeShowId, setActiveShowId] = useState(expanded ? filteredShows[0]?.id : null);
-  const activeShow = filteredShows.find((show) => show.id === activeShowId);
+function ShowSheet({ show, user, onClose }) {
+  const { token, users, refresh, removeShow } = useData();
+  const { toast, confirm } = useUI();
+  const [editing, setEditing] = useState(false);
+  const [marking, setMarking] = useState(false);
+  const admin = isAdmin(user);
+  const staff = isStaff(user);
 
-  useEffect(() => {
-    if (expanded && filteredShows.length > 0 && (!activeShowId || !filteredShows.find(s => s.id === activeShowId))) {
-      setActiveShowId(filteredShows[0].id);
+  if (editing) {
+    return (
+      <ShowEditor
+        show={show}
+        managers={users.filter((u) => u.role === "manager")}
+        singers={users.filter((u) => u.role === "employee")}
+        onClose={() => setEditing(false)}
+        onSaved={() => setEditing(false)}
+      />
+    );
+  }
+
+  const deleteShow = async () => {
+    const ok = await confirm({
+      title: "Delete this show?",
+      body: `${show.location} on ${longDate(show.date)} and all its attendance records will be removed. This can't be undone.`,
+      confirmLabel: "Delete show",
+      danger: true
+    });
+    if (!ok) return;
+    onClose();
+    removeShow(show.id);
+    try {
+      await api(`/shows/${show.id}`, { token, method: "DELETE" });
+      toast("Show deleted");
+    } catch (err) {
+      toast(err.message, "error");
     }
-  }, [selectedMonth, filteredShows, expanded, activeShowId]);
+    refresh(true);
+  };
+
+  const mark = async () => {
+    setMarking(true);
+    try {
+      await api("/attendance", { token, method: "POST", body: { show_id: show.id } });
+      await refresh(true);
+      toast("Attendance marked. Your manager will review it.");
+      onClose();
+    } catch (err) {
+      toast(err.message, "error");
+      setMarking(false);
+    }
+  };
+
+  const totalPay = Object.values(show.employee_pay || {}).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const singerEntry = show.attendance[0];
+  const sState = singerState(show);
+
+  const footer = admin ? (
+    <>
+      <button className="btn btn-danger !flex-none" onClick={deleteShow} aria-label="Delete show">
+        <Trash size={17} /> <span className="hidden sm:inline">Delete</span>
+      </button>
+      <button className="btn btn-primary" onClick={() => setEditing(true)}>
+        <PencilSimple size={17} /> Edit show
+      </button>
+    </>
+  ) : !staff && sState.canMark ? (
+    <button className="btn btn-brand" onClick={mark} disabled={marking}>
+      <Check size={17} weight="bold" /> {marking ? "Marking…" : "I performed at this show"}
+    </button>
+  ) : null;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
-        <MonthFilter shows={shows} selectedMonth={selectedMonth} onSelect={setSelectedMonth} />
-        {(role === "admin" || role === "superior") && filteredShows.length > 0 && (
-          <button 
-            onClick={() => setShowCloneModal(true)}
-            className="flex items-center gap-2 rounded-full border border-white/5 bg-white/[0.04] px-4 py-1.5 text-xs font-medium text-slate-400 transition-all hover:bg-white/[0.08] hover:text-white sm:text-sm"
-          >
-            <Copy size={16} />
-            <span className="hidden sm:inline">Copy Month</span>
-          </button>
+    <Sheet title={show.location} subtitle={`${longDate(show.date)} · ${formatTime(show.time)}`} onClose={onClose} footer={footer}>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-[13px]">
+        <Detail label="Manager" value={show.manager?.name || "—"} />
+        <Detail label="Show ID" value={show.id} />
+        {staff ? (
+          <>
+            <Detail label="Singers" value={show.employees.length} />
+            {admin && <Detail label="Total pay" value={totalPay ? inr(totalPay) : "Not set"} />}
+          </>
+        ) : (
+          <>
+            <Detail label="Your pay" value={myPay(show, user) != null ? inr(myPay(show, user)) : "Not set"} />
+            <Detail label="Status" value={<Pill tone={sState.tone}>{sState.label}</Pill>} />
+          </>
         )}
-      </div>
-      <section className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-        <div className="space-y-3">
-          <h2 className="section-title">{(role === "admin" || role === "superior") ? "All shows" : "Assigned shows"}</h2>
-          {filteredShows.length === 0 ? (
-            <EmptyState title="No shows this month" copy="Select another month or check back later." />
+      </dl>
+
+      {staff ? (
+        <>
+          <div className="mb-2 mt-6 flex items-center justify-between">
+            <h3 className="section-label">Line-up & attendance</h3>
+            <span className="text-xs subtle">{show.attendance.length} of {show.employees.length} marked</span>
+          </div>
+          <div className="card overflow-hidden">
+            {show.employees.length === 0 ? (
+              <Empty title="No singers assigned" copy={admin ? "Edit the show to add singers." : ""} />
+            ) : (
+              show.employees.map((employee) => (
+                <LineupRow
+                  key={employee.id}
+                  show={show}
+                  employee={employee}
+                  entry={show.attendance.find((a) => a.user_id === employee.id)}
+                  user={user}
+                />
+              ))
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="mt-6">
+          {singerEntry ? (
+            <p className="alert tone-neutral">
+              You marked this show on {fmtStamp(singerEntry.marked_at)}.{" "}
+              {singerEntry.approval_status === "pending" ? "Your manager hasn't reviewed it yet." : `It was ${singerEntry.approval_status}.`}
+            </p>
+          ) : sState.canMark ? (
+            <p className="alert tone-brand">Did you perform? Mark it so your manager can approve it for pay.</p>
           ) : (
-            filteredShows.map((show) => (
-              <ShowCard
-                key={show.id}
-                show={show}
-                compact
-                active={activeShowId === show.id}
-                onClick={() => setActiveShowId(show.id)}
-              />
-            ))
+            <p className="alert tone-info">You can mark attendance once the show starts at {formatTime(show.time)}.</p>
           )}
         </div>
-        <ApprovalPanel show={activeShow} token={token} role={role} onChanged={onChanged} />
-      </section>
+      )}
+    </Sheet>
+  );
+}
 
-      {showCloneModal && (
-        <CopyScheduleModal
-          shows={filteredShows}
-          sourceMonth={selectedMonth}
-          token={token}
-          onClose={() => setShowCloneModal(false)}
-          onDone={(newMonth) => {
-            setShowCloneModal(false);
-            onChanged(true); // Silent refresh: a full one remounts this view and resets the month
-            setSelectedMonth(newMonth); // Switch to the new month
-          }}
-        />
+function LineupRow({ show, employee, entry, user }) {
+  const review = useReview();
+  const [busy, setBusy] = useState(false);
+  const admin = isAdmin(user);
+  const pay = show.employee_pay?.[String(employee.id)];
+
+  const decide = async (status) => {
+    setBusy(true);
+    await review(entry, status, employee.name);
+    setBusy(false);
+  };
+
+  let sub;
+  if (entry) sub = `Marked ${fmtStamp(entry.marked_at)}`;
+  else sub = hasStarted(show) ? "Hasn't marked yet" : "Show hasn't started";
+  if (admin && pay != null) sub += ` · ${inr(pay)}`;
+
+  return (
+    <div className="row">
+      <Avatar name={employee.name} />
+      <div className="row-main">
+        <p className="row-title">{employee.name}</p>
+        <p className="row-sub !whitespace-normal">{sub}</p>
+      </div>
+      {entry?.approval_status === "pending" ? (
+        <div className="flex gap-1.5">
+          <button className="decide decide-bad" disabled={busy} onClick={() => decide("rejected")} aria-label={`Reject ${employee.name}`} title="Reject">
+            <X size={18} weight="bold" />
+          </button>
+          <button className="decide decide-ok" disabled={busy} onClick={() => decide("approved")} aria-label={`Approve ${employee.name}`} title="Approve">
+            <Check size={18} weight="bold" />
+          </button>
+        </div>
+      ) : entry ? (
+        <div className="flex flex-col items-end gap-1">
+          <Pill tone={entry.approval_status === "approved" ? "ok" : "bad"}>
+            {entry.approval_status === "approved" ? "Approved" : "Rejected"}
+          </Pill>
+          {/* Only admins may flip a decision that's already been made. */}
+          {admin && (
+            <button
+              className="text-xs font-medium muted underline-offset-2 hover:underline"
+              disabled={busy}
+              onClick={() => decide(entry.approval_status === "approved" ? "rejected" : "approved")}
+            >
+              Change to {entry.approval_status === "approved" ? "rejected" : "approved"}
+            </button>
+          )}
+        </div>
+      ) : (
+        <Pill tone="neutral" plain>{hasStarted(show) ? "Not marked" : "Upcoming"}</Pill>
       )}
     </div>
   );
 }
 
-function ShowCard({ show, compact = false, active = false, onClick }) {
-  const markedCount = show.attendance.length;
-  const pendingCount = show.attendance.filter((entry) => entry.approval_status === "pending").length;
-
-  return (
-    <button className={`show-card ${active ? "show-card-active" : ""}`} onClick={onClick}>
-      <div className="flex min-w-0 items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="truncate text-left text-lg font-semibold text-white">{show.location}</p>
-          <p className="mt-1 text-left text-sm text-slate-400">{show.id}</p>
-        </div>
-        <StatusBadge status={pendingCount ? "pending" : markedCount ? "marked" : "open"} />
-      </div>
-      <div className={`mt-5 grid gap-3 text-sm text-slate-300 ${compact ? "grid-cols-1" : "sm:grid-cols-3"}`}>
-        <Meta icon={Clock} label={formatTime(show.time)} />
-        <Meta icon={MapPin} label={show.location} />
-        <Meta icon={Users} label={`${show.employees.length} singers`} />
-      </div>
-    </button>
-  );
-}
-
-function Meta({ icon, label }) {
-  return (
-    <span className="inline-flex min-w-0 items-center gap-2">
-      {React.createElement(icon, { className: "shrink-0 text-indigo-300", size: 17 })}
-      <span className="truncate">{label}</span>
-    </span>
-  );
-}
-
-const DECISIONS = {
-  approved: { label: "Approve", Icon: Check, tone: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" },
-  rejected: { label: "Reject", Icon: X, tone: "border-rose-400/30 bg-rose-500/10 text-rose-200" }
-};
-
-function ApprovalPanel({ show, token, role, onChanged }) {
-  const [busyId, setBusyId] = useState(null);
-  const [error, setError] = useState("");
-  // Pending: approve or reject. Finalized: only admins/superiors may flip it.
-  const decisionsFor = (entry) => {
-    if (!entry) return [];
-    if (entry.approval_status === "pending") return ["approved", "rejected"];
-    if (role === "admin" || role === "superior") {
-      return [entry.approval_status === "approved" ? "rejected" : "approved"];
-    }
-    return [];
-  };
-  const rows = useMemo(() => {
-    if (!show) return [];
-    return show.employees.map((employee) => ({
-      employee,
-      attendance: show.attendance.find((entry) => entry.user_id === employee.id)
-    }));
-  }, [show]);
-
-  const review = async (entry, approval_status) => {
-    setBusyId(entry.id);
+function useReview() {
+  const { token, refresh } = useData();
+  const { toast } = useUI();
+  return useCallback(async (entry, approval_status, name) => {
     try {
-      await api(`/attendance/${entry.id}/review`, {
-        token,
-        method: "PATCH",
-        body: { approval_status }
-      });
-      setError("");
-      onChanged(true);
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setBusyId(null);
+      await api(`/attendance/${entry.id}/review`, { token, method: "PATCH", body: { approval_status } });
+      await refresh(true);
+      toast(`${name}: ${approval_status === "approved" ? "approved" : "rejected"}`);
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }, [token, refresh, toast]);
+}
+
+/* Create or edit a show. Pay sits next to each singer so it's set in one pass. */
+function ShowEditor({ show, managers, singers, onClose, onSaved }) {
+  const { token, refresh } = useData();
+  const { toast } = useUI();
+  const [form, setForm] = useState(() => ({
+    date: show?.date || todayIST(),
+    time: show?.time || "19:30",
+    location: show?.location || "",
+    manager_id: show?.manager_id ?? managers[0]?.id ?? "",
+    employee_ids: show?.employee_ids || show?.employees.map((e) => e.id) || [],
+    employee_pay: { ...(show?.employee_pay || {}) }
+  }));
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const toggle = (id) => {
+    setForm((current) => {
+      const has = current.employee_ids.includes(id);
+      const pay = { ...current.employee_pay };
+      if (has) delete pay[String(id)];
+      return { ...current, employee_ids: has ? current.employee_ids.filter((x) => x !== id) : [...current.employee_ids, id], employee_pay: pay };
+    });
+  };
+
+  const setPay = (id, value) =>
+    setForm((current) => ({ ...current, employee_pay: { ...current.employee_pay, [String(id)]: value === "" ? null : Number(value) } }));
+
+  const totalPay = form.employee_ids.reduce((sum, id) => sum + (Number(form.employee_pay[String(id)]) || 0), 0);
+  const visibleSingers = singers.filter((s) => s.name.toLowerCase().includes(query.trim().toLowerCase()));
+
+  const save = async () => {
+    if (!form.location.trim()) return setError("Add a venue for the show.");
+    if (!form.manager_id) return setError("Pick a manager. Add one in Team first if the list is empty.");
+    if (!form.employee_ids.length) return setError("Assign at least one singer.");
+    setSaving(true);
+    setError("");
+    const body = {
+      date: form.date,
+      time: form.time,
+      location: form.location.trim(),
+      manager_id: Number(form.manager_id),
+      employee_ids: form.employee_ids.map(Number),
+      employee_pay: form.employee_pay
+    };
+    try {
+      if (show) {
+        await api(`/shows/${show.id}`, { token, method: "PATCH", body });
+        toast("Show updated");
+      } else {
+        const data = await api("/shows", { token, method: "POST", body });
+        toast(`${data.show.location} scheduled`);
+      }
+      await refresh(true);
+      onSaved(body);
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
     }
   };
 
-  if (!show) {
-    return <EmptyState title="Select a show" copy="Open a show to review marked attendance." />;
-  }
-
   return (
-    <section className="panel">
-      <div className="mb-5">
-        <h2 className="section-title">{show.location}</h2>
-        <p className="section-copy">
-          {formatDate(show.date)} at {formatTime(show.time)}
-        </p>
-        {error && <FormFeedback error={error} />}
+    <Sheet
+      title={show ? "Edit show" : "New show"}
+      subtitle={show ? show.id : "Schedule a show and set the line-up."}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? "Saving…" : show ? "Save changes" : "Create show"}
+          </button>
+        </>
+      }
+    >
+      <div className="form-grid">
+        <Field label="Venue">
+          <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Bandra Social Rooftop" />
+        </Field>
+        <div className="form-grid form-grid-2 !grid-cols-2">
+          <Field label="Date">
+            <input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+          </Field>
+          <Field label="Start time">
+            <input className="input" type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} />
+          </Field>
+        </div>
+        <Field label="Manager">
+          <select className="input" value={form.manager_id} onChange={(e) => setForm({ ...form, manager_id: e.target.value })}>
+            {managers.length === 0 && <option value="">No managers yet</option>}
+            {managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        </Field>
       </div>
-      <div className="space-y-3 md:hidden">
-        {rows.map((row) => (
-          <div className="approval-card" key={row.employee.id}>
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate font-medium text-white">{row.employee.name}</p>
-                <p className="mt-1 text-sm text-slate-400">{row.employee.username}</p>
-              </div>
-              <StatusBadge status={row.attendance?.approval_status || "waiting"} />
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <div>
-                <p className="mobile-label">Attendance</p>
-                <StatusBadge status={row.attendance ? "marked" : "not marked"} />
-              </div>
-              <div>
-                <p className="mobile-label">Approval</p>
-                <StatusBadge status={row.attendance?.approval_status || "waiting"} />
-              </div>
-            </div>
-            {decisionsFor(row.attendance).length ? (
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                {decisionsFor(row.attendance).map((decision) => {
-                  const { label, Icon, tone } = DECISIONS[decision];
-                  return (
-                    <button
-                      key={decision}
-                      className={`decision-button-mobile ${tone}`}
-                      disabled={busyId === row.attendance.id}
-                      onClick={() => review(row.attendance, decision)}
-                    >
-                      <Icon size={19} />
-                      {row.attendance.approval_status === "pending" ? label : `Change to ${decision}`}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="mt-4 text-sm text-slate-500">No action needed</p>
-            )}
-          </div>
-        ))}
+
+      <div className="mb-2 mt-6 flex items-end justify-between gap-3">
+        <div>
+          <h3 className="section-label">Singers & pay</h3>
+          <p className="text-xs subtle">{form.employee_ids.length} selected</p>
+        </div>
+        <span className="text-[13px] font-semibold">{inr(totalPay)}</span>
       </div>
-      <div className="hidden overflow-x-auto md:block">
-        <table className="w-full min-w-[620px] text-left">
-          <thead className="text-xs uppercase tracking-[0.18em] text-slate-500">
-            <tr className="border-b border-white/10">
-              <th className="py-3 pr-4 font-medium">Name</th>
-              <th className="py-3 pr-4 font-medium">Status</th>
-              <th className="py-3 pr-4 font-medium">Approval</th>
-              <th className="py-3 font-medium">Action</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/10">
-            {rows.map((row) => (
-              <tr key={row.employee.id}>
-                <td className="py-4 pr-4 text-white">{row.employee.name}</td>
-                <td className="py-4 pr-4">
-                  <StatusBadge status={row.attendance ? "marked" : "not marked"} />
-                </td>
-                <td className="py-4 pr-4">
-                  <StatusBadge status={row.attendance?.approval_status || "waiting"} />
-                </td>
-                <td className="py-4">
-                  {decisionsFor(row.attendance).length ? (
-                    <div className="flex gap-2">
-                      {decisionsFor(row.attendance).map((decision) => {
-                        const { label, Icon, tone } = DECISIONS[decision];
-                        const title = row.attendance.approval_status === "pending" ? label : `Change to ${decision}`;
-                        return (
-                          <button
-                            key={decision}
-                            className={`decision-button ${tone}`}
-                            disabled={busyId === row.attendance.id}
-                            onClick={() => review(row.attendance, decision)}
-                            title={title}
-                            aria-label={title}
-                          >
-                            <Icon size={18} />
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <span className="text-sm text-slate-500">No action</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {singers.length > 6 && (
+        <div className="relative mb-2">
+          <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 subtle" />
+          <input className="input !pl-9" placeholder="Search singers" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+      )}
+      <div className="card overflow-hidden">
+        {singers.length === 0 ? (
+          <Empty title="No singers yet" copy="Add singers in Team first." />
+        ) : (
+          visibleSingers.map((singer) => {
+            const on = form.employee_ids.includes(singer.id);
+            return (
+              <div key={singer.id} className="pick-row">
+                <input id={`pick-${singer.id}`} className="checkbox" type="checkbox" checked={on} onChange={() => toggle(singer.id)} />
+                <label htmlFor={`pick-${singer.id}`} className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+                  <Avatar name={singer.name} size="sm" />
+                  <span className="row-title">{singer.name}</span>
+                </label>
+                {on && (
+                  <div className="input-prefix w-[7.5rem] flex-none">
+                    <span>₹</span>
+                    <input
+                      className="input !min-h-9 text-right"
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      step="100"
+                      placeholder="Pay"
+                      aria-label={`Pay for ${singer.name}`}
+                      value={form.employee_pay[String(singer.id)] ?? ""}
+                      onChange={(e) => setPay(singer.id, e.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
-    </section>
+
+      {error && <p className="alert tone-bad mt-4">{error}</p>}
+    </Sheet>
   );
 }
 
-function CopyScheduleModal({ shows, sourceMonth, token, onClose, onDone }) {
+function CopyMonthSheet({ shows, sourceMonth, onClose, onDone }) {
+  const { token, refresh } = useData();
+  const { toast } = useUI();
   const [targetMonth, setTargetMonth] = useState("");
-  const [isCloning, setIsCloning] = useState(false);
-  const [progress, setProgress] = useState({ current: 0, total: shows.length });
+  const [progress, setProgress] = useState(null);
   const [error, setError] = useState("");
 
-  const clone = async () => {
-    if (!targetMonth) {
-      setError("Please select a target month");
-      return;
-    }
-    
-    if (targetMonth === sourceMonth) {
-      setError("Target month must be different from source month");
-      return;
-    }
+  const nextMonths = useMemo(() => {
+    const [year, month] = sourceMonth.split("-").map(Number);
+    return Array.from({ length: 12 }, (_, i) => {
+      const date = new Date(year, month - 1 + i + 1, 1);
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    });
+  }, [sourceMonth]);
 
-    setIsCloning(true);
+  const copy = async () => {
+    if (!targetMonth) return setError("Pick a month to copy into.");
     setError("");
-    
     try {
       for (let i = 0; i < shows.length; i++) {
         const show = shows[i];
-        setProgress({ current: i + 1, total: shows.length });
-        
+        setProgress(i + 1);
         // Same day of month, clamped so 31 Oct -> 30 Nov instead of an invalid date
         const [targetYear, targetMon] = targetMonth.split("-").map(Number);
         const lastDay = new Date(targetYear, targetMon, 0).getDate();
         const day = String(Math.min(Number(show.date.slice(8, 10)), lastDay)).padStart(2, "0");
-        const newDate = `${targetMonth}-${day}`;
-        
         await api("/shows", {
           token,
           method: "POST",
           body: {
-            date: newDate,
+            date: `${targetMonth}-${day}`,
             time: show.time,
             location: show.location,
             manager_id: show.manager_id,
@@ -1726,238 +1371,503 @@ function CopyScheduleModal({ shows, sourceMonth, token, onClose, onDone }) {
           }
         });
       }
+      await refresh(true);
+      toast(`Copied ${plural(shows.length, "show")} to ${monthLabel(targetMonth)}`);
       onDone(targetMonth);
     } catch (err) {
-      setError(`Failed to clone: ${err.message}`);
-      setIsCloning(false);
+      setError(`Stopped after ${progress ? progress - 1 : 0} shows: ${err.message}`);
+      setProgress(null);
     }
   };
 
-  const [year, month] = sourceMonth.split("-");
-  const d = new Date(parseInt(year), parseInt(month) - 1, 1);
-  const sourceLabel = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(d);
-
-  // Generate next 12 months for target selection
-  const nextMonths = useMemo(() => {
-    const options = [];
-    for (let i = 1; i <= 12; i++) {
-      const date = new Date(parseInt(year), parseInt(month) - 1 + i, 1);
-      const val = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-      const label = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(date);
-      options.push({ val, label });
-    }
-    return options;
-  }, [year, month]);
-
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center modal-backdrop p-4">
-      <div className="w-full max-w-md modal p-6">
-        <h2 className="text-xl font-semibold text-white">Copy monthly schedule</h2>
-        <p className="mt-2 text-sm text-slate-400">
-          This will copy all {shows.length} shows from <strong>{sourceLabel}</strong> to a new month.
-        </p>
-
-        {!isCloning ? (
-          <div className="mt-6 space-y-4">
-            <label>
-              <span className="mb-2 block text-sm text-slate-300">Target month</span>
-              <select
-                className="field appearance-none"
-                value={targetMonth}
-                onChange={(e) => setTargetMonth(e.target.value)}
-              >
-                <option value="">Select a month...</option>
-                {nextMonths.map(m => (
-                  <option key={m.val} value={m.val}>{m.label}</option>
-                ))}
-              </select>
-            </label>
-            {error && <p className="mt-2 text-sm text-rose-400">{error}</p>}
-            <div className="flex justify-end gap-3 pt-2">
-              <button className="ghost-button" onClick={onClose}>Cancel</button>
-              <button className="primary-button" onClick={clone}>Copy Schedule</button>
-            </div>
-          </div>
-        ) : (
-          <div className="mt-8 space-y-4">
-            <div className="h-2 w-full overflow-hidden rounded-full bg-white/5">
-              <div 
-                className="h-full bg-indigoSoft transition-all duration-300" 
-                style={{ width: `${(progress.current / progress.total) * 100}%` }}
-              />
-            </div>
-            <p className="text-center text-sm text-slate-300">
-              Cloning shows: {progress.current} of {progress.total}...
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
+    <Sheet
+      title="Copy month"
+      subtitle={`${plural(shows.length, "show")} from ${monthLabel(sourceMonth)}`}
+      onClose={progress ? () => {} : onClose}
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onClose} disabled={!!progress}>Cancel</button>
+          <button className="btn btn-primary" onClick={copy} disabled={!!progress}>
+            {progress ? `Copying ${progress} of ${shows.length}…` : "Copy shows"}
+          </button>
+        </>
+      }
+    >
+      <Field label="Copy into" hint="Each show keeps its day of the month, time, venue, line-up and pay.">
+        <select className="input" value={targetMonth} onChange={(e) => setTargetMonth(e.target.value)} disabled={!!progress}>
+          <option value="">Choose a month</option>
+          {nextMonths.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+        </select>
+      </Field>
+      {progress && (
+        <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-[var(--hover)]">
+          <div className="h-full bg-ink transition-all duration-300" style={{ width: `${(progress / shows.length) * 100}%` }} />
+        </div>
+      )}
+      {error && <p className="alert tone-bad mt-4">{error}</p>}
+    </Sheet>
   );
 }
 
-function ConfirmAttendanceModal({ show, token, onClose, onDone }) {
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+/* ==========================================================================
+   TEAM (admin)
+   ========================================================================== */
 
-  const confirm = async () => {
-    setSubmitting(true);
-    setError("");
-    try {
-      await api("/attendance", {
-        token,
-        method: "POST",
-        body: { show_id: show.id }
-      });
-      onDone();
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
+function TeamPage({ user }) {
+  const { users, shows, activity, initialLoadDone, error } = useData();
+  const [query, setQuery] = useState("");
+  const [role, setRole] = useState("all");
+  const [openId, setOpenId] = useState(null);
+  const [adding, setAdding] = useState(false);
+
+  if (!initialLoadDone) return error ? <LoadError /> : <PageSkeleton />;
+
+  const todayById = Object.fromEntries((activity.summary || []).map((a) => [a.user.id, a.status]));
+  const roles = [
+    { id: "all", label: "Everyone", match: () => true },
+    { id: "employee", label: "Singers", match: (u) => u.role === "employee" },
+    { id: "manager", label: "Managers", match: (u) => u.role === "manager" },
+    { id: "admin", label: "Admins", match: (u) => isAdmin(u) }
+  ];
+  const q = query.trim().toLowerCase();
+  const list = users
+    .filter(roles.find((r) => r.id === role).match)
+    .filter((u) => !q || u.name.toLowerCase().includes(q) || u.username.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const available = Object.values(todayById).filter((s) => s === "active").length;
+  const openUser = users.find((u) => u.id === openId);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center modal-backdrop p-4">
-      <div className="w-full max-w-md modal p-6">
-        <h2 className="text-xl font-semibold text-white">Confirm attendance</h2>
-        <p className="mt-3 text-sm leading-6 text-slate-300">
-          Confirm you attended {show.location} on {formatDate(show.date)} at {formatTime(show.time)}.
-        </p>
-        {error && <p className="mt-4 rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p>}
-        <div className="mt-6 flex justify-end gap-3">
-          <button className="ghost-button" onClick={onClose}>
-            Cancel
+    <>
+      <PageHead
+        title="Team"
+        sub={`${plural(users.length, "person", "people")} · ${available} available today`}
+        actions={
+          <button className="btn btn-primary desktop-only" onClick={() => setAdding(true)}>
+            <UserPlus size={16} /> Add member
           </button>
-          <button className="primary-button" disabled={submitting} onClick={confirm}>
-            {submitting ? "Marking" : "Yes, mark attendance"}
-          </button>
+        }
+      />
+
+      <div className="mb-3 grid gap-3 sm:flex sm:items-center sm:justify-between">
+        <div className="relative sm:w-72">
+          <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 subtle" />
+          <input className="input !pl-9" placeholder="Search by name or username" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <div className="chips">
+          {roles.map((r) => (
+            <button key={r.id} className={`chip ${role === r.id ? "chip-on" : ""}`} onClick={() => setRole(r.id)}>
+              {r.label}
+              <span className="chip-count">{users.filter(r.match).length}</span>
+            </button>
+          ))}
         </div>
       </div>
-    </div>
+
+      <section className="card overflow-hidden">
+        {list.length === 0 ? (
+          <Empty icon={UsersThree} title="No one matches" copy="Try another name or filter." />
+        ) : (
+          list.map((person) => (
+            <button key={person.id} className="row" onClick={() => setOpenId(person.id)}>
+              <Avatar name={person.name} />
+              <div className="row-main">
+                <p className="row-title">{person.name}{person.id === user.id && <span className="ml-1.5 text-xs font-normal subtle">(you)</span>}</p>
+                <p className="row-sub">{person.username} · {ROLE_LABEL[person.role]}</p>
+              </div>
+              {todayById[person.id] === "active" && <Pill tone="ok">Available</Pill>}
+              {todayById[person.id] === "inactive" && <Pill tone="bad">Off</Pill>}
+              <CaretRight size={16} className="subtle hidden sm:block" />
+            </button>
+          ))
+        )}
+      </section>
+
+      <button className="fab" onClick={() => setAdding(true)} aria-label="Add member">
+        <UserPlus size={24} />
+      </button>
+
+      {openUser && <MemberSheet person={openUser} shows={shows} today={todayById[openUser.id]} user={user} onClose={() => setOpenId(null)} />}
+      {adding && <AddMemberSheet user={user} onClose={() => setAdding(false)} />}
+    </>
   );
 }
 
-function ExportButton({ token }) {
-  const download = async () => {
-    const response = await fetch(`${API_URL}/export/attendance.xlsx`, {
-      headers: { Authorization: `Bearer ${token}` }
+function MemberSheet({ person, shows, today, user, onClose }) {
+  const { token, refresh, removeUser } = useData();
+  const { toast, confirm } = useUI();
+  const month = todayIST().slice(0, 7);
+  const monthShows = shows.filter((s) => s.date.startsWith(month));
+
+  const singer = person.role === "employee";
+  const assigned = singer ? monthShows.filter((s) => s.employee_ids?.includes(person.id) || s.employees.some((e) => e.id === person.id)) : monthShows.filter((s) => s.manager_id === person.id);
+  const approved = singer ? assigned.filter((s) => s.attendance.some((a) => a.user_id === person.id && a.approval_status === "approved")) : [];
+  const earned = approved.reduce((sum, s) => sum + (Number(s.employee_pay?.[String(person.id)]) || 0), 0);
+  const canDelete = user.role === "admin" && person.id !== user.id;
+
+  const remove = async () => {
+    const ok = await confirm({
+      title: `Remove ${person.name}?`,
+      body: "Their account and all their attendance records will be deleted. This can't be undone.",
+      confirmLabel: "Remove member",
+      danger: true
     });
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "sunggeet-attendance.xlsx";
-    anchor.click();
-    URL.revokeObjectURL(url);
+    if (!ok) return;
+    onClose();
+    removeUser(person.id);
+    try {
+      await api(`/users/${person.id}`, { token, method: "DELETE" });
+      toast(`${person.name} removed`);
+    } catch (err) {
+      toast(err.message, "error");
+    }
+    refresh(true);
   };
 
   return (
-    <button className="primary-button inline-flex w-full items-center justify-center gap-2 sm:w-auto" onClick={download}>
-      <DownloadSimple size={18} />
-      Export Excel
+    <Sheet
+      title={person.name}
+      subtitle={person.username}
+      onClose={onClose}
+      footer={canDelete && (
+        <button className="btn btn-danger" onClick={remove}>
+          <Trash size={17} /> Remove member
+        </button>
+      )}
+    >
+      <div className="flex items-center gap-4">
+        <Avatar name={person.name} size="lg" />
+        <div className="flex flex-wrap gap-1.5">
+          <Pill tone="neutral" plain>{ROLE_LABEL[person.role]}</Pill>
+          {today === "active" && <Pill tone="ok">Available today</Pill>}
+          {today === "inactive" && <Pill tone="bad">Off today</Pill>}
+          {!today && <Pill tone="neutral">No check-in today</Pill>}
+        </div>
+      </div>
+
+      <h3 className="section-label mb-2 mt-6">{monthLabel(month)}</h3>
+      <div className="kpis !grid-cols-2">
+        <Kpi label={singer ? "Shows assigned" : person.role === "manager" ? "Shows managed" : "Shows"} value={singer || person.role === "manager" ? assigned.length : monthShows.length} />
+        {singer ? <Kpi label="Earned (approved)" value={inr(earned)} /> : <Kpi label="To review" value={pendingEntries(assigned).length} />}
+      </div>
+
+      {(singer || person.role === "manager") && assigned.length > 0 && (
+        <>
+          <h3 className="section-label mb-2 mt-6">Shows this month</h3>
+          <div className="card overflow-hidden">
+            {assigned.map((show) => {
+              const entry = show.attendance.find((a) => a.user_id === person.id);
+              return (
+                <div key={show.id} className="row">
+                  <DateTile date={show.date} />
+                  <div className="row-main">
+                    <p className="row-title">{show.location}</p>
+                    <p className="row-sub">{formatTime(show.time)}{singer && show.employee_pay?.[String(person.id)] != null ? ` · ${inr(show.employee_pay[String(person.id)])}` : ""}</p>
+                  </div>
+                  {singer && (entry ? (
+                    <Pill tone={{ approved: "ok", rejected: "bad", pending: "warn" }[entry.approval_status]}>
+                      {{ approved: "Approved", rejected: "Rejected", pending: "Pending" }[entry.approval_status]}
+                    </Pill>
+                  ) : (
+                    <Pill tone="neutral" plain>{hasStarted(show) ? "Not marked" : "Upcoming"}</Pill>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </Sheet>
+  );
+}
+
+function AddMemberSheet({ user, onClose }) {
+  const { token, refresh } = useData();
+  const { toast } = useUI();
+  const [form, setForm] = useState({ name: "", username: "", password: "", role: "employee" });
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!form.name.trim() || !form.username.trim() || !form.password) return setError("Fill in name, username and a temporary password.");
+    setSaving(true);
+    setError("");
+    try {
+      const data = await api("/users", { token, method: "POST", body: form });
+      await refresh(true);
+      toast(`${data.user.name} added as ${ROLE_LABEL[data.user.role].toLowerCase()}`);
+      onClose();
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Sheet
+      title="Add member"
+      subtitle="They sign in with this username and password."
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "Adding…" : "Add member"}</button>
+        </>
+      }
+    >
+      <div className="form-grid">
+        <Field label="Full name">
+          <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ishaan Arora" />
+        </Field>
+        <Field label="Username">
+          <input
+            className="input"
+            autoCapitalize="none"
+            autoCorrect="off"
+            value={form.username}
+            onChange={(e) => setForm({ ...form, username: e.target.value })}
+            placeholder="ishaan@sunggeet.com" inputMode="email"
+          />
+        </Field>
+        <Field label="Temporary password" hint="Share it with them privately.">
+          <input className="input" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+        </Field>
+        <Field label="Role">
+          <div className="seg w-full" role="group" aria-label="Role">
+            {[
+              ["employee", "Singer"],
+              ["manager", "Manager"],
+              ["admin", "Admin"],
+              ...(user.role === "admin" ? [["superior", "Superior"]] : [])
+            ].map(([value, label]) => (
+              <button key={value} type="button" aria-pressed={form.role === value} onClick={() => setForm({ ...form, role: value })}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </Field>
+      </div>
+      {error && <p className="alert tone-bad mt-4">{error}</p>}
+    </Sheet>
+  );
+}
+
+/* ==========================================================================
+   ACTIVITY / HISTORY
+   ========================================================================== */
+
+function ActivityPage({ user }) {
+  const { profile, initialLoadDone, error } = useData();
+  const [filter, setFilter] = useState("all");
+
+  if (!initialLoadDone) return error ? <LoadError /> : <PageSkeleton />;
+
+  const singer = user.role === "employee";
+  const entries = [...(profile?.activity || [])]
+    .filter((e) => e.show)
+    .sort((a, b) => String(b.marked_at || b.show.date).localeCompare(String(a.marked_at || a.show.date)));
+  const filters = [
+    { id: "all", label: "All" },
+    { id: "pending", label: "Pending" },
+    { id: "approved", label: "Approved" },
+    { id: "rejected", label: "Rejected" }
+  ];
+  const list = filter === "all" ? entries : entries.filter((e) => e.approval_status === filter);
+
+  return (
+    <>
+      <PageHead
+        title={singer ? "History" : "Activity"}
+        sub={singer ? "Every show you've marked and what happened to it." : "Attendance marked by the team and the decisions on it."}
+      />
+      <div className="chips mb-3">
+        {filters.map((f) => (
+          <button key={f.id} className={`chip ${filter === f.id ? "chip-on" : ""}`} onClick={() => setFilter(f.id)}>
+            {f.label}
+            {f.id !== "all" && <span className="chip-count">{entries.filter((e) => e.approval_status === f.id).length}</span>}
+          </button>
+        ))}
+      </div>
+      <section className="card overflow-hidden">
+        {list.length === 0 ? (
+          <Empty icon={ClockCounterClockwise} title="Nothing here yet" copy={singer ? "Shows you mark will be listed here." : "Marked attendance will be listed here."} />
+        ) : (
+          list.map((entry) => (
+            <div key={entry.id} className="row">
+              {singer ? <DateTile date={entry.show.date} /> : <Avatar name={entry.employee?.name || "?"} />}
+              <div className="row-main">
+                <p className="row-title">{singer ? entry.show.location : entry.employee?.name}</p>
+                <p className="row-sub">
+                  {singer ? "" : `${entry.show.location} · `}
+                  {fmtDate(entry.show.date, { day: "numeric", month: "short", year: "numeric" })}
+                  {entry.marked_at ? ` · marked ${fmtStamp(entry.marked_at)}` : ""}
+                </p>
+              </div>
+              <Pill tone={{ approved: "ok", rejected: "bad", pending: "warn" }[entry.approval_status] || "neutral"}>
+                {{ approved: "Approved", rejected: "Rejected", pending: "Pending" }[entry.approval_status] || entry.approval_status}
+              </Pill>
+            </div>
+          ))
+        )}
+      </section>
+    </>
+  );
+}
+
+/* ==========================================================================
+   REPORTS (admin): who performed and what they're owed, per month
+   ========================================================================== */
+
+function ReportsPage() {
+  const { users, shows, initialLoadDone, error } = useData();
+  const months = useMemo(() => {
+    const set = new Set(shows.map((s) => s.date.slice(0, 7)));
+    set.add(todayIST().slice(0, 7));
+    return [...set].sort();
+  }, [shows]);
+  const [month, setMonth] = useState(() => defaultMonth(shows));
+
+  if (!initialLoadDone) return error ? <LoadError /> : <PageSkeleton />;
+
+  const activeMonth = months.includes(month) ? month : months.at(-1);
+  const monthShows = shows.filter((s) => s.date.startsWith(activeMonth));
+  const rows = users
+    .filter((u) => u.role === "employee")
+    .map((singer) => {
+      const assigned = monthShows.filter((s) => s.employee_ids?.includes(singer.id) || s.employees.some((e) => e.id === singer.id));
+      const entries = assigned.map((s) => ({ show: s, entry: s.attendance.find((a) => a.user_id === singer.id) }));
+      const approved = entries.filter((x) => x.entry?.approval_status === "approved");
+      return {
+        singer,
+        assigned: assigned.length,
+        marked: entries.filter((x) => x.entry).length,
+        approved: approved.length,
+        pay: approved.reduce((sum, x) => sum + (Number(x.show.employee_pay?.[String(singer.id)]) || 0), 0)
+      };
+    })
+    .sort((a, b) => b.pay - a.pay || b.approved - a.approved || a.singer.name.localeCompare(b.singer.name));
+  const totals = rows.reduce((t, r) => ({ assigned: t.assigned + r.assigned, marked: t.marked + r.marked, approved: t.approved + r.approved, pay: t.pay + r.pay }), { assigned: 0, marked: 0, approved: 0, pay: 0 });
+
+  return (
+    <>
+      <PageHead title="Reports" sub="Approved shows and pay per singer. Only approved attendance counts." actions={<ExportButton />} />
+
+      <div className="mb-3 flex justify-end">
+        <MonthStepper months={months} value={activeMonth} onChange={setMonth} />
+      </div>
+
+      <div className="kpis mb-4 lg:mb-6">
+        <Kpi label="Shows" value={monthShows.length} foot={monthLabel(activeMonth)} />
+        <Kpi label="Spots marked" value={`${totals.marked}/${totals.assigned}`} foot="Marked of assigned" />
+        <Kpi label="Approved" value={totals.approved} foot="Counted for pay" />
+        <Kpi label="Pay due" value={inr(totals.pay)} foot="Approved shows" />
+      </div>
+
+      <section className="card overflow-hidden">
+        {rows.length === 0 ? (
+          <Empty icon={ChartBar} title="No singers yet" copy="Add singers in Team to see reports." />
+        ) : (
+          <>
+            {/* Phones: one row per singer. */}
+            <div className="lg:hidden">
+              {rows.map((r) => (
+                <div key={r.singer.id} className="row">
+                  <Avatar name={r.singer.name} />
+                  <div className="row-main">
+                    <p className="row-title">{r.singer.name}</p>
+                    <p className="row-sub">{r.approved} approved · {r.marked}/{r.assigned} marked</p>
+                  </div>
+                  <span className="font-semibold">{inr(r.pay)}</span>
+                </div>
+              ))}
+              <div className="row bg-surface-2 font-semibold">
+                <span className="row-main">Total</span>
+                <span>{inr(totals.pay)}</span>
+              </div>
+            </div>
+            {/* Desktop: a proper table. */}
+            <table className="table hidden lg:table">
+              <thead>
+                <tr>
+                  <th>Singer</th>
+                  <th className="num">Assigned</th>
+                  <th className="num">Marked</th>
+                  <th className="num">Approved</th>
+                  <th className="num">Pay due</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.singer.id}>
+                    <td>
+                      <div className="flex items-center gap-2.5">
+                        <Avatar name={r.singer.name} size="sm" />
+                        <div>
+                          <p className="font-medium">{r.singer.name}</p>
+                          <p className="text-xs muted">{r.singer.username}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="num">{r.assigned}</td>
+                    <td className="num">{r.marked}</td>
+                    <td className="num">{r.approved}</td>
+                    <td className="num font-semibold">{inr(r.pay)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td>Total</td>
+                  <td className="num">{totals.assigned}</td>
+                  <td className="num">{totals.marked}</td>
+                  <td className="num">{totals.approved}</td>
+                  <td className="num">{inr(totals.pay)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </>
+        )}
+      </section>
+    </>
+  );
+}
+
+function ExportButton() {
+  const { token } = useData();
+  const { toast } = useUI();
+  const [busy, setBusy] = useState(false);
+
+  const download = async () => {
+    setBusy(true);
+    try {
+      const response = await fetch(`${API_URL}/export/attendance.xlsx`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw new Error("Export failed. Try again.");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "sunggeet-attendance.xlsx";
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button className="btn btn-secondary" onClick={download} disabled={busy}>
+      <DownloadSimple size={16} /> {busy ? "Preparing…" : "Export Excel"}
     </button>
   );
 }
 
-function StatusBadge({ status }) {
-  const normalized = status.toLowerCase();
-  const tone =
-    normalized.includes("rejected") || normalized.includes("not")
-      ? "border-rose-400/25 bg-rose-500/10 text-rose-200"
-      : normalized.includes("approved") || normalized.includes("marked")
-        ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200"
-        : "border-amber-400/25 bg-amber-500/10 text-amber-200";
-
-  return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${tone}`}>
-      {status}
-    </span>
-  );
-}
-
-// This month if it has shows, otherwise the latest month (shows arrive oldest-first).
-function defaultMonth(shows) {
-  const now = new Date();
-  const current = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  if (shows.some((s) => s.date.startsWith(current))) return current;
-  return shows.at(-1)?.date.slice(0, 7) || "";
-}
-
-function MonthFilter({ shows, selectedMonth, onSelect }) {
-  const months = useMemo(() => {
-    const unique = [...new Set(shows.map((s) => s.date.slice(0, 7)))];
-    return unique.sort().reverse();
-  }, [shows]);
-
-  if (months.length <= 1) return null;
-
-  return (
-    <div className="mb-6 flex flex-wrap gap-2 overflow-x-auto pb-2 scrollbar-hide">
-      {months.map((m) => {
-        const [year, month] = m.split("-");
-        const d = new Date(parseInt(year), parseInt(month) - 1, 1);
-        const label = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(d);
-        const isActive = selectedMonth === m;
-        return (
-          <button
-            key={m}
-            onClick={() => onSelect(m)}
-            className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-              isActive 
-                ? "bg-indigoSoft text-ink font-semibold shadow-lift" 
-                : "bg-white/[0.04] text-slate-400 hover:bg-white/[0.08] hover:text-white border border-white/5"
-            }`}
-          >
-            {label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function EmptyState({ title, copy }) {
-  return (
-    <div className="panel grid min-h-56 place-items-center text-center">
-      <div>
-        <p className="text-lg font-semibold text-white">{title}</p>
-        <p className="mt-2 max-w-sm text-sm text-slate-400">{copy}</p>
-      </div>
-    </div>
-  );
-}
-
-function DashboardSkeleton() {
-  return (
-    <div className="space-y-6">
-      <div className="grid gap-3 md:grid-cols-4">
-        {[1, 2, 3, 4].map((item) => (
-          <div className="h-28 rounded-xl border border-white/10 bg-white/[0.04] shimmer" key={item} />
-        ))}
-      </div>
-      <div className="h-96 rounded-xl border border-white/10 bg-white/[0.04] shimmer" />
-    </div>
-  );
-}
-
-function useWorkspaceData() {
-  const context = useContext(DataContext);
-  if (!context) throw new Error("useWorkspaceData must be used within DataProvider");
-  return context;
-}
-
-
-function useAdminData() {
-  const context = useContext(DataContext);
-  if (!context) throw new Error("useAdminData must be used within DataProvider");
-  return context;
-}
-
 /* ==========================================================================
    WEBSITE
-   Controls what the public landing page shows. Two tabs: the calendar of
-   gigs, and the teams.
+   Controls what the public landing page shows: the calendar of gigs, the
+   teams, and the floating artists.
 
    Deliberately does NOT create shows. A manager enters a gig once, in Shows;
    here you add the public-facing fields it doesn't capture and publish it.
@@ -1970,7 +1880,8 @@ const EVENT_TYPES = [
   { value: "community", label: "Community / religious" }
 ];
 
-function WebsiteView({ token }) {
+function WebsitePage() {
+  const { token } = useData();
   const [tab, setTab] = useState("calendar");
   const [shows, setShows] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -1978,7 +1889,6 @@ function WebsiteView({ token }) {
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    setLoading(true);
     setError("");
     try {
       const data = await api("/website/data", { token, timeout: 25000 });
@@ -1993,130 +1903,84 @@ function WebsiteView({ token }) {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <div className="panel"><p className="section-copy">Loading…</p></div>;
-
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="section-title">Website</h1>
-        <p className="section-copy">
-          What the public landing page shows. Changes here go live on the site.
-        </p>
-      </div>
-
-      {error && (
-        <div className="panel border-rose-500/40">
-          <p className="text-sm text-rose-300">{error}</p>
-        </div>
-      )}
-
-      <div className="tab-row flex gap-2">
+    <>
+      <PageHead title="Website" sub="What the public site shows. Changes go live straight away." />
+      <div className="seg mb-4 w-full sm:w-auto" role="group" aria-label="Website section">
         {[
-          { id: "calendar", label: "Calendar" },
-          { id: "teams", label: "Teams" },
-          { id: "floaters", label: "Floaters" }
-        ].map((item) => (
-          <button
-            key={item.id}
-            className={item.id === tab ? "primary-button" : "ghost-button"}
-            onClick={() => setTab(item.id)}
-          >
-            {item.label}
-          </button>
+          ["calendar", "Calendar"],
+          ["teams", "Teams"],
+          ["floaters", "Floating artists"]
+        ].map(([id, label]) => (
+          <button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
 
-      {tab === "calendar" && (
-        <WebsiteCalendar token={token} shows={shows} teams={teams} onChanged={load} />
+      {error && <p className="alert tone-bad mb-4">{error}</p>}
+
+      {tab === "floaters" ? (
+        <WebsiteFloaters />
+      ) : loading ? (
+        <ListSkeleton />
+      ) : tab === "calendar" ? (
+        <WebsiteCalendar shows={shows} teams={teams} onChanged={load} />
+      ) : (
+        <WebsiteTeams teams={teams} onChanged={load} />
       )}
-      {tab === "teams" && (
-        <WebsiteTeams token={token} teams={teams} onChanged={load} />
-      )}
-      {tab === "floaters" && <WebsiteFloaters token={token} />}
-    </div>
+    </>
   );
 }
 
-function WebsiteCalendar({ token, shows, teams, onChanged }) {
+function WebsiteCalendar({ shows, teams, onChanged }) {
   const [editing, setEditing] = useState(null);
 
-  if (!shows.length) {
-    return (
-      <div className="panel">
-        <p className="section-copy">
-          No upcoming shows. Create one in <strong>Shows</strong> first — this
-          section publishes gigs, it doesn't create them.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-3">
-      {shows.map((show) => {
-        const live = show.website;
-        return (
-          <div key={show.id} className="panel">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-3">
-                  <p className="font-semibold">{show.location}</p>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    live?.is_published
-                      ? "bg-emerald-500/15 text-emerald-300"
-                      : "bg-white/10 text-slate-400"
-                  }`}>
-                    {live?.is_published ? "On the website" : "Not published"}
-                  </span>
-                </div>
-                <p className="text-sm text-slate-400 mt-1">
-                  {show.date} · {show.time}
-                  {show.performers.length > 0 && ` · ${show.performers.join(", ")}`}
-                </p>
-                {live && (
-                  <p className="text-sm text-slate-500 mt-1">
-                    {live.city} · {EVENT_TYPES.find((e) => e.value === live.event_type)?.label}
-                    {live.set_name && ` · ${live.set_name}`}
+    <>
+      <section className="card overflow-hidden">
+        {shows.length === 0 ? (
+          <Empty icon={CalendarBlank} title="No upcoming shows" copy="Create a show in Shows first. This section publishes gigs, it doesn't create them." />
+        ) : (
+          shows.map((show) => {
+            const live = show.website;
+            return (
+              <button key={show.id} className="row" onClick={() => setEditing(show)}>
+                <DateTile date={show.date} />
+                <div className="row-main">
+                  <p className="row-title">{live?.venue || show.location}</p>
+                  <p className="row-sub">
+                    {formatTime(show.time)}
+                    {live?.city ? ` · ${live.city}` : ""}
+                    {show.performers.length > 0 ? ` · ${show.performers.join(", ")}` : ""}
                   </p>
+                </div>
+                {live?.is_published ? (
+                  <Pill tone="ok">Live</Pill>
+                ) : live ? (
+                  <Pill tone="neutral">Hidden</Pill>
+                ) : (
+                  <span className="btn btn-secondary btn-sm">Publish</span>
                 )}
-              </div>
-
-              <div className="flex gap-2">
-                <button className="ghost-button" onClick={() => setEditing(show)}>
-                  <PencilSimple size={16} /> {live ? "Edit" : "Publish"}
-                </button>
-                {live && (
-                  <button
-                    className="ghost-button"
-                    onClick={async () => {
-                      if (!window.confirm(`Remove "${show.location}" from the website? The gig itself stays.`)) return;
-                      await api(`/website/shows/${show.id}`, { token, method: "DELETE" });
-                      onChanged();
-                    }}
-                  >
-                    <Trash size={16} />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })}
+              </button>
+            );
+          })
+        )}
+      </section>
 
       {editing && (
-        <PublishShowDialog
-          token={token}
+        <PublishSheet
           show={editing}
           teams={teams}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); onChanged(); }}
         />
       )}
-    </div>
+    </>
   );
 }
 
-function PublishShowDialog({ token, show, teams, onClose, onSaved }) {
+function PublishSheet({ show, teams, onClose, onSaved }) {
+  const { token } = useData();
+  const { toast, confirm } = useUI();
   const live = show.website || {};
   const [form, setForm] = useState({
     venue: live.venue || show.location || "",
@@ -2131,14 +1995,15 @@ function PublishShowDialog({ token, show, teams, onClose, onSaved }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const save = async () => {
+    if (!form.city.trim()) return setError("Add the city.");
     setSaving(true);
     setError("");
     try {
       await api(`/website/shows/${show.id}`, { token, method: "PUT", body: form });
+      toast(form.is_published ? "Published to the website" : "Saved (hidden from the website)");
       onSaved();
     } catch (err) {
       setError(err.message || "Could not save");
@@ -2146,141 +2011,127 @@ function PublishShowDialog({ token, show, teams, onClose, onSaved }) {
     }
   };
 
+  const unpublish = async () => {
+    const ok = await confirm({ title: "Remove from the website?", body: `"${show.location}" disappears from the public calendar. The show itself stays.`, confirmLabel: "Remove", danger: true });
+    if (!ok) return;
+    try {
+      await api(`/website/shows/${show.id}`, { token, method: "DELETE" });
+      toast("Removed from the website");
+      onSaved();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center modal-backdrop p-4 overflow-y-auto">
-      <div className="modal w-full max-w-lg my-8 p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Publish to the website</h2>
-          <button className="icon-button" onClick={onClose}><X size={18} /></button>
+    <Sheet
+      title={show.website ? "Edit listing" : "Publish show"}
+      subtitle={`${longDate(show.date)} · ${formatTime(show.time)}`}
+      onClose={onClose}
+      footer={
+        <>
+          {show.website && (
+            <button className="btn btn-danger !flex-none" onClick={unpublish} aria-label="Remove from website">
+              <Trash size={17} /> <span className="hidden sm:inline">Remove</span>
+            </button>
+          )}
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+        </>
+      }
+    >
+      <p className="alert tone-neutral mb-4">Date, time and performers come from the show. Change those in Shows.</p>
+      <div className="form-grid">
+        <Field label="Venue name shown publicly">
+          <input className="input" value={form.venue} onChange={set("venue")} placeholder={show.location} />
+        </Field>
+        <div className="form-grid form-grid-2">
+          <Field label="City">
+            <input className="input" value={form.city} onChange={set("city")} placeholder="New Delhi" />
+          </Field>
+          <Field label="Event type">
+            <select className="input" value={form.event_type} onChange={set("event_type")}>
+              {EVENT_TYPES.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Team playing">
+            <select className="input" value={form.team_id} onChange={set("team_id")}>
+              <option value="">None</option>
+              {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Set name">
+            <input className="input" value={form.set_name} onChange={set("set_name")} placeholder="Jazz standards" />
+          </Field>
         </div>
-
-        <p className="section-copy mt-1">
-          {show.date} · {show.time} — date, time and performers come from the
-          show itself. Change those in <strong>Shows</strong>.
-        </p>
-
-        <div className="mt-5 space-y-4">
-          <label className="field-label">
-            <span>Venue name shown publicly</span>
-            <input className="field" value={form.venue} onChange={set("venue")} placeholder={show.location} />
-          </label>
-
-          <div className="form-grid">
-            <label className="field-label">
-              <span>City *</span>
-              <input className="field" value={form.city} onChange={set("city")} placeholder="New Delhi" />
-            </label>
-            <label className="field-label">
-              <span>Event type *</span>
-              <select className="field" value={form.event_type} onChange={set("event_type")}>
-                {EVENT_TYPES.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
-              </select>
-            </label>
-          </div>
-
-          <div className="form-grid">
-            <label className="field-label">
-              <span>Team playing</span>
-              <select className="field" value={form.team_id} onChange={set("team_id")}>
-                <option value="">— none —</option>
-                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </label>
-            <label className="field-label">
-              <span>Set name</span>
-              <input className="field" value={form.set_name} onChange={set("set_name")} placeholder="Jazz standards, Sufi second set" />
-            </label>
-          </div>
-
-          <div className="form-grid">
-            <label className="field-label">
-              <span>Note</span>
-              <input className="field" value={form.note} onChange={set("note")} placeholder="Two sets, no cover." />
-            </label>
-            <label className="field-label">
-              <span>Ticket link</span>
-              <input className="field" value={form.ticket_url} onChange={set("ticket_url")} placeholder="https://…" />
-            </label>
-          </div>
-
-          <MediaUpload
-            token={token}
-            kind="image"
-            label="Poster"
-            hint="Portrait artwork, roughly 3:4. Without one the card falls back to a typographic design."
-            value={null}
-            url={form.poster_url}
-            onChange={({ url }) => setForm((prev) => ({ ...prev, poster_url: url || "" }))}
-          />
-
-          <label className="flex items-center gap-3 text-sm">
-            <input
-              type="checkbox"
-              checked={form.is_published}
-              onChange={(e) => setForm((f) => ({ ...f, is_published: e.target.checked }))}
-            />
-            Visible on the website
-          </label>
-        </div>
-
-        {error && <p className="text-sm text-rose-300 mt-4">{error}</p>}
-
-        <div className="mt-6 flex gap-3">
-          <button className="primary-button" onClick={save} disabled={saving}>
-            <FloppyDisk size={16} /> {saving ? "Saving…" : "Save"}
-          </button>
-          <button className="ghost-button" onClick={onClose}>Cancel</button>
-        </div>
+        <Field label="Note">
+          <input className="input" value={form.note} onChange={set("note")} placeholder="Two sets, no cover." />
+        </Field>
+        <Field label="Ticket link">
+          <input className="input" type="url" inputMode="url" value={form.ticket_url} onChange={set("ticket_url")} placeholder="https://…" />
+        </Field>
+        <MediaUpload
+          kind="image"
+          label="Poster"
+          hint="Portrait artwork, roughly 3:4. Without one the card uses a typographic design."
+          value={null}
+          url={form.poster_url}
+          onChange={({ url }) => setForm((prev) => ({ ...prev, poster_url: url || "" }))}
+        />
+        <Toggle
+          label="Visible on the website"
+          hint="Turn off to keep the details but hide the listing."
+          checked={form.is_published}
+          onChange={(v) => setForm((f) => ({ ...f, is_published: v }))}
+        />
       </div>
-    </div>
+      {error && <p className="alert tone-bad mt-4">{error}</p>}
+    </Sheet>
   );
 }
 
-function WebsiteTeams({ token, teams, onChanged }) {
-  const [editing, setEditing] = useState(null);
-  const [creating, setCreating] = useState(false);
+function WebsiteTeams({ teams, onChanged }) {
+  const [editing, setEditing] = useState(null); // team | "new"
 
   return (
-    <div className="space-y-3">
-      <button className="primary-button" onClick={() => setCreating(true)}>
-        <Plus size={16} /> Add a team
-      </button>
-
-      {teams.map((team) => (
-        <div key={team.id} className="panel">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="font-semibold">
-                {team.name}
-                {!team.is_active && <span className="ml-2 text-xs text-slate-500">(hidden)</span>}
-              </p>
-              {team.tagline && <p className="text-sm text-slate-400">{team.tagline}</p>}
-              <p className="text-sm text-slate-500 mt-1">
-                {team.members.length
-                  ? team.members.map((m) => `${m.name} (${m.role})`).join(", ")
-                  : "No members listed"}
-              </p>
-            </div>
-            <button className="ghost-button" onClick={() => setEditing(team)}>
-              <PencilSimple size={16} /> Edit
+    <>
+      <div className="mb-3 flex justify-end">
+        <button className="btn btn-secondary" onClick={() => setEditing("new")}><Plus size={16} /> Add team</button>
+      </div>
+      <section className="card overflow-hidden">
+        {teams.length === 0 ? (
+          <Empty icon={UsersThree} title="No teams yet" copy="Teams appear as cards on the public site." />
+        ) : (
+          teams.map((team) => (
+            <button key={team.id} className="row" onClick={() => setEditing(team)}>
+              <span className="thumb">
+                {team.photo_url ? <img src={resolveMedia(null, team.photo_url)} alt="" /> : <Image size={18} />}
+              </span>
+              <div className="row-main">
+                <p className="row-title">{team.name}</p>
+                <p className="row-sub">
+                  {team.tagline || (team.members.length ? team.members.map((m) => m.name).join(", ") : "No members listed")}
+                </p>
+              </div>
+              {team.is_active ? <Pill tone="ok">Live</Pill> : <Pill tone="neutral">Hidden</Pill>}
             </button>
-          </div>
-        </div>
-      ))}
+          ))
+        )}
+      </section>
 
-      {(editing || creating) && (
-        <TeamDialog
-          token={token}
-          team={editing}
-          onClose={() => { setEditing(null); setCreating(false); }}
-          onSaved={() => { setEditing(null); setCreating(false); onChanged(); }}
+      {editing && (
+        <TeamSheet
+          team={editing === "new" ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); onChanged(); }}
         />
       )}
-    </div>
+    </>
   );
 }
 
-function TeamDialog({ token, team, onClose, onSaved }) {
+function TeamSheet({ team, onClose, onSaved }) {
+  const { token } = useData();
+  const { toast } = useUI();
   const [form, setForm] = useState({
     name: team?.name || "",
     tagline: team?.tagline || "",
@@ -2294,14 +2145,13 @@ function TeamDialog({ token, team, onClose, onSaved }) {
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const save = async () => {
+    if (!form.name.trim()) return setError("Give the team a name.");
     setSaving(true);
     setError("");
     try {
-      if (team) {
-        await api(`/website/teams/${team.id}`, { token, method: "PUT", body: form });
-      } else {
-        await api("/website/teams", { token, method: "POST", body: form });
-      }
+      if (team) await api(`/website/teams/${team.id}`, { token, method: "PUT", body: form });
+      else await api("/website/teams", { token, method: "POST", body: form });
+      toast(team ? "Team saved" : "Team added");
       onSaved();
     } catch (err) {
       setError(err.message || "Could not save");
@@ -2310,87 +2160,67 @@ function TeamDialog({ token, team, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center modal-backdrop p-4 overflow-y-auto">
-      <div className="modal w-full max-w-lg my-8 p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{team ? "Edit team" : "Add a team"}</h2>
-          <button className="icon-button" onClick={onClose}><X size={18} /></button>
-        </div>
-
-        <div className="mt-5 space-y-4">
-          <label className="field-label">
-            <span>Name *</span>
-            <input className="field" value={form.name} onChange={set("name")} placeholder="The Tuesday Trio" />
-          </label>
-          <label className="field-label">
-            <span>Tagline</span>
-            <input className="field" value={form.tagline} onChange={set("tagline")} placeholder="The open-jam house band" />
-          </label>
-          <label className="field-label">
-            <span>Blurb</span>
-            <textarea className="field" rows={3} value={form.blurb} onChange={set("blurb")} />
-          </label>
-          <MediaUpload
-            token={token}
-            kind="image"
-            label="Team photo"
-            hint="Shown on the team card."
-            value={null}
-            url={form.photo_url}
-            onChange={({ url }) => setForm((prev) => ({ ...prev, photo_url: url || "" }))}
-          />
-          <label className="field-label">
-            <span>Showreel URL</span>
-            <input className="field" value={form.video_url} onChange={set("video_url")} placeholder="https://…" />
-          </label>
-          {team && (
-            <label className="flex items-center gap-3 text-sm">
-              <input
-                type="checkbox"
-                checked={form.is_active}
-                onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))}
-              />
-              Show this team on the website
-            </label>
-          )}
-        </div>
-
-        {error && <p className="text-sm text-rose-300 mt-4">{error}</p>}
-
-        <div className="mt-6 flex gap-3">
-          <button className="primary-button" onClick={save} disabled={saving}>
-            <FloppyDisk size={16} /> {saving ? "Saving…" : "Save"}
-          </button>
-          <button className="ghost-button" onClick={onClose}>Cancel</button>
-        </div>
+    <Sheet
+      title={team ? team.name : "Add team"}
+      subtitle={team?.members?.length ? team.members.map((m) => `${m.name} (${m.role})`).join(", ") : undefined}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+        </>
+      }
+    >
+      <div className="form-grid">
+        <Field label="Name">
+          <input className="input" value={form.name} onChange={set("name")} placeholder="The Tuesday Trio" />
+        </Field>
+        <Field label="Tagline">
+          <input className="input" value={form.tagline} onChange={set("tagline")} placeholder="The open-jam house band" />
+        </Field>
+        <Field label="Blurb">
+          <textarea className="input" rows={3} value={form.blurb} onChange={set("blurb")} />
+        </Field>
+        <MediaUpload
+          kind="image"
+          label="Team photo"
+          hint="Shown on the team card."
+          value={null}
+          url={form.photo_url}
+          onChange={({ url }) => setForm((prev) => ({ ...prev, photo_url: url || "" }))}
+        />
+        <Field label="Showreel link">
+          <input className="input" inputMode="url" value={form.video_url} onChange={set("video_url")} placeholder="https://…" />
+        </Field>
+        {team && (
+          <Toggle label="Show this team on the website" checked={form.is_active} onChange={(v) => setForm((f) => ({ ...f, is_active: v }))} />
+        )}
       </div>
-    </div>
+      {error && <p className="alert tone-bad mt-4">{error}</p>}
+    </Sheet>
   );
 }
 
-/* ==========================================================================
-   WEBSITE → FLOATERS
+/* --------------------------------------------------------------------------
+   WEBSITE → FLOATING ARTISTS
+   The cut-outs that drift around the public landing page and sing when
+   tapped. Everything here is swappable without a deploy.
+   -------------------------------------------------------------------------- */
 
-   The artist cut-outs that drift around the public landing page and sing when
-   tapped. Add someone, upload their cut-out and a 10-15s clip, and they are
-   live. Everything here is swappable without a deploy, which is the whole
-   point — the shipped ones are placeholders.
-   ========================================================================== */
-
-function WebsiteFloaters({ token }) {
+function WebsiteFloaters() {
+  const { token } = useData();
   const [floaters, setFloaters] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(null);
+  const [editing, setEditing] = useState(null); // floater | "new"
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const data = await api("/website/floaters", { token, timeout: 25000 });
       setFloaters(data.floaters || []);
       setError("");
     } catch (err) {
-      setError(err.message || "Could not load floaters");
+      setError(err.message || "Could not load floating artists");
     } finally {
       setLoading(false);
     }
@@ -2398,83 +2228,55 @@ function WebsiteFloaters({ token }) {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <div className="panel"><p className="section-copy">Loading…</p></div>;
-
-  if (editing) {
-    return (
-      <FloaterEditor
-        token={token}
-        floater={editing === "new" ? null : editing}
-        nextSort={floaters.length}
-        onClose={() => setEditing(null)}
-        onSaved={() => { setEditing(null); load(); }}
-      />
-    );
-  }
-
   return (
-    <div className="space-y-4">
-      <div className="panel">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold">Floating artists</h2>
-            <p className="section-copy">
-              These drift around the top of the landing page. Tapping one plays their clip.
-            </p>
-          </div>
-          <button className="primary-button" onClick={() => setEditing("new")}>
-            Add artist
-          </button>
-        </div>
+    <>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[13px] muted">These drift around the top of the landing page. Tapping one plays their clip.</p>
+        <button className="btn btn-secondary" onClick={() => setEditing("new")}><Plus size={16} /> Add artist</button>
       </div>
 
-      {error && (
-        <div className="panel border-rose-500/40">
-          <p className="text-sm text-rose-300">{error}</p>
-        </div>
-      )}
+      {error && <p className="alert tone-bad mb-3">{error}</p>}
 
-      {floaters.length === 0 ? (
-        <div className="panel">
-          <p className="section-copy">
-            No artists yet. Add one and they will appear on the landing page.
-          </p>
-        </div>
+      {loading ? (
+        <ListSkeleton />
+      ) : floaters.length === 0 ? (
+        <section className="card">
+          <Empty icon={MusicNotes} title="No artists yet" copy="Add one and they'll appear on the landing page." />
+        </section>
       ) : (
         <div className="floater-grid">
           {floaters.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              className="floater-card"
-              onClick={() => setEditing(f)}
-            >
-              <div className="floater-thumb">
-                {f.image_id || f.image_url ? (
-                  <img
-                    src={resolveMedia(f.image_id, f.image_url)}
-                    alt=""
-                  />
-                ) : (
-                  <span>No image</span>
-                )}
+            <button key={f.id} type="button" className="card floater-card" onClick={() => setEditing(f)}>
+              <div className="upload-thumb">
+                {f.image_id || f.image_url ? <img src={resolveMedia(f.image_id, f.image_url)} alt={f.name} /> : <span>No image</span>}
               </div>
-              <div className="floater-meta">
-                <span className="floater-name">{f.name}</span>
-                <span className="floater-role">{f.role || "—"}</span>
-                <span className={f.is_active ? "floater-badge-on" : "floater-badge-off"}>
-                  {f.is_active ? "Live" : "Hidden"}
-                </span>
+              <div className="flex items-start justify-between gap-2 p-2.5">
+                <div className="min-w-0">
+                  <p className="row-title text-[13px]">{f.name}</p>
+                  <p className="row-sub !text-xs">{f.role || "—"}</p>
+                </div>
+                {f.is_active ? <Pill tone="ok">Live</Pill> : <Pill tone="neutral">Off</Pill>}
               </div>
             </button>
           ))}
         </div>
       )}
-    </div>
+
+      {editing && (
+        <FloaterSheet
+          floater={editing === "new" ? null : editing}
+          nextSort={floaters.length}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }}
+        />
+      )}
+    </>
   );
 }
 
-function FloaterEditor({ token, floater, nextSort, onClose, onSaved }) {
+function FloaterSheet({ floater, nextSort, onClose, onSaved }) {
+  const { token } = useData();
+  const { toast, confirm } = useUI();
   const [form, setForm] = useState({
     name: floater?.name || "",
     role: floater?.role || "",
@@ -2487,122 +2289,92 @@ function FloaterEditor({ token, floater, nextSort, onClose, onSaved }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const set = (key) => (event) => setForm((prev) => ({ ...prev, [key]: event.target.value }));
 
-  const set = (key) => (event) =>
-    setForm((prev) => ({ ...prev, [key]: event.target.value }));
-
-  async function save() {
-    if (!form.name.trim()) { setError("Give them a name"); return; }
+  const save = async () => {
+    if (!form.name.trim()) return setError("Give them a name.");
     setSaving(true);
     setError("");
     try {
-      if (floater) {
-        await api(`/website/floaters/${floater.id}`, {
-          token, method: "PUT", body: form, timeout: 25000
-        });
-      } else {
-        await api("/website/floaters", { token, method: "POST", body: form, timeout: 25000 });
-      }
+      if (floater) await api(`/website/floaters/${floater.id}`, { token, method: "PUT", body: form, timeout: 25000 });
+      else await api("/website/floaters", { token, method: "POST", body: form, timeout: 25000 });
+      toast(floater ? "Artist saved" : "Artist added");
       onSaved();
     } catch (err) {
       setError(err.message || "Could not save");
       setSaving(false);
     }
-  }
+  };
 
-  async function remove() {
-    if (!window.confirm(`Remove ${form.name} from the landing page?`)) return;
+  const remove = async () => {
+    const ok = await confirm({ title: `Remove ${form.name}?`, body: "They'll disappear from the landing page.", confirmLabel: "Remove", danger: true });
+    if (!ok) return;
     setSaving(true);
     try {
       await api(`/website/floaters/${floater.id}`, { token, method: "DELETE", timeout: 25000 });
+      toast(`${form.name} removed`);
       onSaved();
     } catch (err) {
       setError(err.message || "Could not remove");
       setSaving(false);
     }
-  }
+  };
 
   return (
-    <div className="panel space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">{floater ? form.name || "Edit artist" : "New artist"}</h2>
-        <button className="ghost-button" onClick={onClose}>Back</button>
-      </div>
-
-      {error && <p className="text-sm text-rose-300">{error}</p>}
-
+    <Sheet
+      title={floater ? floater.name : "Add artist"}
+      onClose={onClose}
+      footer={
+        <>
+          {floater && (
+            <button className="btn btn-danger !flex-none" onClick={remove} disabled={saving} aria-label="Remove artist">
+              <Trash size={17} /> <span className="hidden sm:inline">Remove</span>
+            </button>
+          )}
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+        </>
+      }
+    >
       <div className="form-grid">
-        <label className="field-label">
-          <span>Name</span>
-          <input className="field" value={form.name} onChange={set("name")} placeholder="Aditya" />
-        </label>
-        <label className="field-label">
-          <span>Plays</span>
-          <input className="field" value={form.role} onChange={set("role")} placeholder="vocals, guitar" />
-        </label>
+        <div className="form-grid form-grid-2">
+          <Field label="Name">
+            <input className="input" value={form.name} onChange={set("name")} placeholder="Aditya" />
+          </Field>
+          <Field label="Plays">
+            <input className="input" value={form.role} onChange={set("role")} placeholder="vocals, guitar" />
+          </Field>
+        </div>
+        <MediaUpload
+          kind="image"
+          label="Cut-out"
+          hint="Best as the artist alone on a transparent background. Any photo works."
+          value={form.image_id}
+          url={form.image_url}
+          onChange={({ id, url }) => setForm((p) => ({ ...p, image_id: id, image_url: url }))}
+        />
+        <MediaUpload
+          kind="audio"
+          label="Clip"
+          hint="10-15 seconds is ideal (MP3 or M4A, up to 3MB). Plays when someone taps them."
+          value={form.audio_id}
+          url={form.audio_url}
+          onChange={({ id, url }) => setForm((p) => ({ ...p, audio_id: id, audio_url: url }))}
+        />
+        <Field label="Order" hint="Lower numbers appear first.">
+          <input className="input" type="number" inputMode="numeric" value={form.sort_order} onChange={(e) => setForm((p) => ({ ...p, sort_order: Number(e.target.value) }))} />
+        </Field>
+        <Toggle label="Show on the landing page" checked={form.is_active} onChange={(v) => setForm((p) => ({ ...p, is_active: v }))} />
       </div>
-
-      <MediaUpload
-        token={token}
-        kind="image"
-        label="Cut-out"
-        hint="Works best as the artist alone on a transparent background. Any photo works — the background just stays."
-        value={form.image_id}
-        url={form.image_url}
-        onChange={({ id, url }) => setForm((p) => ({ ...p, image_id: id, image_url: url }))}
-      />
-
-      <MediaUpload
-        token={token}
-        kind="audio"
-        label="Clip"
-        hint="10-15 seconds is ideal (MP3 or M4A, up to 3MB). Plays when someone taps them."
-        value={form.audio_id}
-        url={form.audio_url}
-        onChange={({ id, url }) => setForm((p) => ({ ...p, audio_id: id, audio_url: url }))}
-      />
-
-      <div className="form-grid">
-        <label className="field-label">
-          <span>Order</span>
-          <input
-            className="field"
-            type="number"
-            value={form.sort_order}
-            onChange={(e) => setForm((p) => ({ ...p, sort_order: Number(e.target.value) }))}
-          />
-        </label>
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={form.is_active}
-            onChange={(e) => setForm((p) => ({ ...p, is_active: e.target.checked }))}
-          />
-          <span>Show on the landing page</span>
-        </label>
-      </div>
-
-      <div className="flex flex-wrap gap-3">
-        <button className="primary-button" onClick={save} disabled={saving}>
-          {saving ? "Saving…" : "Save"}
-        </button>
-        {floater && (
-          <button className="ghost-button text-rose-300" onClick={remove} disabled={saving}>
-            Remove
-          </button>
-        )}
-      </div>
-    </div>
+      {error && <p className="alert tone-bad mt-4">{error}</p>}
+    </Sheet>
   );
 }
 
 /* ==========================================================================
    MEDIA UPLOAD
 
-   Every image field in this app used to be "paste a URL", which assumed you
-   already had the file hosted somewhere. Nobody does. This picks a file off
-   the device, shrinks it in the browser, and stores it in the website
-   database, so a phone photo becomes a live image in two taps.
+   Picks a file off the device, shrinks it in the browser, and stores it in the
+   website database, so a phone photo becomes a live image in two taps.
    ========================================================================== */
 
 const MEDIA_BASE = API_URL.replace(/\/api$/, "");
@@ -2647,9 +2419,7 @@ async function compressImage(file, maxEdge = 1000) {
 
   // WebP keeps the alpha channel, which matters: artist cut-outs are
   // transparent PNGs and JPEG would fill the background with black.
-  const blob = await new Promise((resolve) =>
-    canvas.toBlob(resolve, "image/webp", 0.88)
-  );
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.88));
   if (!blob || blob.size >= file.size) return file;
   return new File([blob], file.name.replace(/\.\w+$/, "") + ".webp", { type: "image/webp" });
 }
@@ -2676,11 +2446,11 @@ const fileToBase64 = (file) =>
  * One upload control. `value` is a media id (or null); `url` is the legacy
  * URL fallback so existing rows keep working.
  */
-function MediaUpload({ token, kind, value, url, onChange, label, hint }) {
+function MediaUpload({ kind, value, url, onChange, label, hint }) {
+  const { token } = useData();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const inputRef = useRef(null);
-
   const preview = resolveMedia(value, url);
 
   async function handleFile(event) {
@@ -2717,55 +2487,356 @@ function MediaUpload({ token, kind, value, url, onChange, label, hint }) {
       <div className="upload-head">
         <span className="upload-label">{label}</span>
         {preview && (
-          <button
-            type="button"
-            className="upload-clear"
-            onClick={() => onChange({ id: null, url: null })}
-          >
+          <button type="button" className="upload-clear" onClick={() => onChange({ id: null, url: null })}>
             Remove
           </button>
         )}
       </div>
-
       <div className="upload-body">
         {kind === "image" ? (
-          <div className="upload-thumb">
-            {preview ? <img src={preview} alt="" /> : <span>No image</span>}
-          </div>
+          <div className="upload-thumb">{preview ? <img src={preview} alt="" /> : <span>No image</span>}</div>
         ) : (
           <div className="upload-audio">
-            {preview ? (
-              <audio controls src={preview} preload="none" />
-            ) : (
-              <span className="text-xs text-slate-400">No clip</span>
-            )}
+            {preview ? <audio controls src={preview} preload="none" /> : <span className="text-xs subtle">No clip yet</span>}
           </div>
         )}
-
         <div className="upload-actions">
-          <input
-            ref={inputRef}
-            type="file"
-            accept={MEDIA_ACCEPT[kind]}
-            onChange={handleFile}
-            hidden
-          />
-          <button
-            type="button"
-            className="ghost-button w-full"
-            disabled={busy}
-            onClick={() => inputRef.current?.click()}
-          >
-            {busy ? "Uploading…" : preview ? "Replace" : `Choose ${kind}`}
+          <input ref={inputRef} type="file" accept={MEDIA_ACCEPT[kind]} onChange={handleFile} hidden />
+          <button type="button" className="btn btn-secondary btn-block" disabled={busy} onClick={() => inputRef.current?.click()}>
+            {busy ? "Uploading…" : preview ? "Replace" : `Choose ${kind === "image" ? "image" : "clip"}`}
           </button>
           {hint && <p className="upload-hint">{hint}</p>}
         </div>
       </div>
-
       {error && <p className="upload-error">{error}</p>}
     </div>
   );
 }
+
+/* ==========================================================================
+   SHARED UI PIECES
+   ========================================================================== */
+
+function Sheet({ title, subtitle, onClose, footer, children, flush = false }) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && closeRef.current();
+    document.addEventListener("keydown", onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, []);
+
+  return createPortal(
+    <>
+      <div className="scrim" onClick={() => closeRef.current()} />
+      <section className="sheet" role="dialog" aria-modal="true" aria-label={title}>
+        <header className="sheet-head">
+          <div className="min-w-0 flex-1 pt-1.5">
+            <h2 className="sheet-title truncate">{title}</h2>
+            {subtitle && <p className="mt-0.5 text-[13px] muted">{subtitle}</p>}
+          </div>
+          <button className="icon-btn" onClick={() => closeRef.current()} aria-label="Close">
+            <X size={18} />
+          </button>
+        </header>
+        <div className={flush ? "sheet-body !p-0" : "sheet-body"}>{children}</div>
+        {footer && <footer className="sheet-foot">{footer}</footer>}
+      </section>
+    </>,
+    document.body
+  );
+}
+
+function PageHead({ title, sub, actions }) {
+  return (
+    <div className="page-head">
+      <div className="min-w-0">
+        <h1 className="page-title">{title}</h1>
+        {sub && <p className="page-sub">{sub}</p>}
+      </div>
+      {actions && <div className="flex items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+function Field({ label, hint, children }) {
+  return (
+    <label className="field">
+      <span className="field-label">{label}</span>
+      {children}
+      {hint && <span className="field-hint">{hint}</span>}
+    </label>
+  );
+}
+
+function Toggle({ label, hint, checked, onChange }) {
+  return (
+    <label className="switch-row">
+      <span>
+        <span className="block text-sm font-medium">{label}</span>
+        {hint && <span className="block text-xs muted">{hint}</span>}
+      </span>
+      <input type="checkbox" className="switch" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    </label>
+  );
+}
+
+function Pill({ tone = "neutral", plain = false, className = "", children }) {
+  return <span className={`pill tone-${tone} ${plain ? "pill-plain" : ""} ${className}`}>{children}</span>;
+}
+
+const AVATAR_TONES = [
+  ["#f8ecdf", "#8a4c1d"],
+  ["#e6eefb", "#2f55a4"],
+  ["#e5f4ea", "#13703f"],
+  ["#f2e9f8", "#74378a"],
+  ["#fdebe1", "#a4471b"],
+  ["#e3f2f1", "#1d6766"],
+  ["#eeede8", "#3b3934"],
+  ["#fbebf1", "#9b2c55"]
+];
+
+function Avatar({ name = "", size }) {
+  const hash = [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+  const [bg, fg] = AVATAR_TONES[hash % AVATAR_TONES.length];
+  const initials = name.trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase()).join("") || "?";
+  return (
+    <span className={`avatar ${size ? `avatar-${size}` : ""}`} style={{ background: bg, color: fg }} aria-hidden="true">
+      {initials}
+    </span>
+  );
+}
+
+function Kpi({ label, value, foot }) {
+  return (
+    <div className="kpi">
+      <p className="kpi-label">{label}</p>
+      <p className="kpi-value">{value}</p>
+      {foot && <p className="kpi-foot">{foot}</p>}
+    </div>
+  );
+}
+
+function Detail({ label, value }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs muted">{label}</dt>
+      <dd className="mt-0.5 truncate font-medium">{value}</dd>
+    </div>
+  );
+}
+
+function DateTile({ date }) {
+  return (
+    <span className="date-tile">
+      <b>{fmtDate(date, { day: "numeric" })}</b>
+      <span>{fmtDate(date, { month: "short" })}</span>
+    </span>
+  );
+}
+
+function MonthStepper({ months, value, onChange }) {
+  const index = months.indexOf(value);
+  return (
+    <div className="stepper">
+      <button onClick={() => onChange(months[index - 1])} disabled={index <= 0} aria-label="Previous month">
+        <CaretLeft size={16} weight="bold" />
+      </button>
+      <span>{monthLabel(value)}</span>
+      <button onClick={() => onChange(months[index + 1])} disabled={index >= months.length - 1} aria-label="Next month">
+        <CaretRight size={16} weight="bold" />
+      </button>
+    </div>
+  );
+}
+
+function Empty({ icon: Icon, title, copy, action }) {
+  return (
+    <div className="empty">
+      {Icon && <span className="empty-icon"><Icon size={22} /></span>}
+      <p className="font-semibold">{title}</p>
+      {copy && <p className="max-w-xs text-[13px] muted">{copy}</p>}
+      {action}
+    </div>
+  );
+}
+
+function LoadError() {
+  const { refresh } = useData();
+  return (
+    <section className="card">
+      <Empty
+        icon={WarningCircle}
+        title="Couldn't load your workspace"
+        copy="Check your connection and try again."
+        action={<button className="btn btn-secondary btn-sm mt-3" onClick={() => refresh()}>Try again</button>}
+      />
+    </section>
+  );
+}
+
+function ListSkeleton({ rows = 4 }) {
+  return (
+    <div className="card overflow-hidden">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="row">
+          <div className="skeleton h-9 w-9" />
+          <div className="flex-1 space-y-2">
+            <div className="skeleton h-3.5 w-2/5" />
+            <div className="skeleton h-3 w-3/5" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PageSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading">
+      <div className="mb-5 space-y-2">
+        <div className="skeleton h-7 w-56" />
+        <div className="skeleton h-4 w-40" />
+      </div>
+      <div className="kpis mb-4">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="kpi space-y-2">
+            <div className="skeleton h-3 w-20" />
+            <div className="skeleton h-6 w-12" />
+          </div>
+        ))}
+      </div>
+      <ListSkeleton />
+    </div>
+  );
+}
+
+function Logo({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <rect x="1.5" y="6" width="2" height="4" rx="1" />
+      <rect x="5" y="3" width="2" height="10" rx="1" />
+      <rect x="8.5" y="4.5" width="2" height="7" rx="1" />
+      <rect x="12" y="6.5" width="2" height="3" rx="1" />
+    </svg>
+  );
+}
+
+function useScrolled(threshold = 28) {
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > threshold);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [threshold]);
+  return scrolled;
+}
+
+/* ==========================================================================
+   DOMAIN HELPERS
+   ========================================================================== */
+
+const IST = "Asia/Kolkata";
+const todayIST = () => new Intl.DateTimeFormat("en-CA", { timeZone: IST }).format(new Date());
+
+// Shows are in India time, whatever the device's timezone.
+const showStart = (show) => new Date(`${show.date}T${show.time}:00+05:30`);
+const hasStarted = (show) => showStart(show) <= new Date();
+
+/* For a singer the API only returns their own attendance entry. */
+const readyToMark = (show) => hasStarted(show) && show.attendance.length === 0;
+
+const myPay = (show, user) => {
+  const value = show.employee_pay?.[String(user.id)] ?? show.employees.find((e) => e.id === user.id)?.pay;
+  return value == null || value === "" ? null : Number(value);
+};
+
+/** Every attendance entry still waiting on a decision, newest show first. */
+function pendingEntries(shows) {
+  return shows
+    .flatMap((show) => show.attendance.filter((a) => a.approval_status === "pending").map((entry) => ({ show, entry })))
+    .sort((a, b) => showStart(b.show) - showStart(a.show));
+}
+
+function staffState(show) {
+  if (!hasStarted(show)) return { tone: "info", label: "Upcoming" };
+  const pending = show.attendance.filter((a) => a.approval_status === "pending").length;
+  if (pending) return { tone: "warn", label: `${pending} to review` };
+  const total = show.employees.length;
+  const approved = show.attendance.filter((a) => a.approval_status === "approved").length;
+  if (total && approved === total) return { tone: "ok", label: "Complete" };
+  return { tone: "neutral", label: `${show.attendance.length}/${total} marked` };
+}
+
+function singerState(show) {
+  const entry = show.attendance[0];
+  if (entry) {
+    return {
+      approved: { tone: "ok", label: "Approved" },
+      rejected: { tone: "bad", label: "Rejected" },
+      pending: { tone: "warn", label: "Awaiting approval" }
+    }[entry.approval_status] || { tone: "neutral", label: entry.approval_status };
+  }
+  if (!hasStarted(show)) return { tone: "info", label: "Upcoming" };
+  return { tone: "brand", label: "Ready to mark", canMark: true };
+}
+
+// This month if it has shows, otherwise the latest month (shows arrive oldest-first).
+function defaultMonth(shows) {
+  const current = todayIST().slice(0, 7);
+  if (shows.some((s) => s.date.startsWith(current))) return current;
+  return shows.at(-1)?.date.slice(0, 7) || current;
+}
+
+function groupByDate(shows) {
+  return shows.reduce((groups, show) => {
+    groups[show.date] = groups[show.date] || [];
+    groups[show.date].push(show);
+    return groups;
+  }, {});
+}
+
+function greeting() {
+  const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hourCycle: "h23", timeZone: IST }).format(new Date()));
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
+
+// Dates are calendar days; format them in UTC so the device timezone can't shift them.
+const fmtDate = (date, options) => new Intl.DateTimeFormat("en-IN", { timeZone: "UTC", ...options }).format(new Date(`${date}T00:00:00Z`));
+const longDate = (date) => fmtDate(date, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+const monthLabel = (month) => fmtDate(`${month}-01`, { month: "long", year: "numeric" });
+
+function dayLabel(date) {
+  const diff = Math.round((new Date(`${date}T00:00:00Z`) - new Date(`${todayIST()}T00:00:00Z`)) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  return fmtDate(date, { weekday: "short", day: "numeric", month: "short" });
+}
+
+function fmtStamp(iso) {
+  if (!iso) return "";
+  return new Intl.DateTimeFormat("en-IN", { timeZone: IST, day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
+}
+
+function formatTime(time) {
+  return new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit" }).format(new Date(`2026-03-19T${time}:00`));
+}
+
+// ₹1,23,456.00 — Indian digit grouping.
+const inr = (amount) =>
+  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(amount) || 0);
 
 async function api(path, options = {}) {
   const controller = new AbortController();
@@ -2802,28 +2873,8 @@ async function api(path, options = {}) {
   }
 }
 
-
-function groupByDate(shows) {
-  return shows.reduce((groups, show) => {
-    groups[show.date] = groups[show.date] || [];
-    groups[show.date].push(show);
-    return groups;
-  }, {});
-}
-
-function formatDate(date) {
-  return new Intl.DateTimeFormat("en-IN", {
-    month: "long",
-    day: "numeric",
-    year: "numeric"
-  }).format(new Date(`${date}T00:00:00`));
-}
-
-function formatTime(time) {
-  return new Intl.DateTimeFormat("en-IN", {
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date(`2026-03-19T${time}:00`));
-}
-
-createRoot(document.getElementById("root")).render(<App />);
+createRoot(document.getElementById("root")).render(
+  <UIProvider>
+    <App />
+  </UIProvider>
+);
