@@ -1622,3 +1622,134 @@ button.row:active {
   border-bottom: 1px solid var(--line);
   border-radius: 0;
 }
+
+/* --------------------------------------------------------------------------
+   Reports: trend chart + deltas
+   -------------------------------------------------------------------------- */
+
+.delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.trend {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.5rem;
+}
+
+.trend-axis {
+  display: flex;
+  height: 10rem;
+  flex-direction: column;
+  justify-content: space-between;
+  color: var(--subtle);
+  font-size: 0.6875rem;
+  text-align: right;
+  transform: translateY(-0.4rem);
+}
+
+.trend-plot {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  height: 10rem;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.trend-grid {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--line);
+  pointer-events: none;
+}
+
+.trend-col {
+  position: relative;
+  display: flex;
+  height: 100%;
+  align-items: flex-end;
+  justify-content: center;
+  border-radius: 6px 6px 0 0;
+}
+
+.trend-col:hover,
+.trend-col-on {
+  background: rgba(25, 24, 22, 0.04);
+}
+
+.trend-bars {
+  display: flex;
+  height: 100%;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.trend-bar {
+  width: clamp(5px, 1.6vw, 14px);
+  border-radius: 4px 4px 0 0;
+  transition: height 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.trend-label {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--subtle);
+  font-size: 0.625rem;
+  white-space: nowrap;
+}
+
+.trend-col-on .trend-label {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.trend {
+  padding-bottom: 1.4rem;
+}
+
+@media (max-width: 479px) {
+  .trend-col:nth-child(odd of .trend-col):not(.trend-col-on) .trend-label {
+    visibility: hidden;
+  }
+}
+
+.kpi-foot .delta {
+  white-space: normal;
+}
+
+.table-compact th,
+.table-compact td {
+  padding: 0.55rem 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.table-compact th:first-child,
+.table-compact td:first-child {
+  width: 34%;
+}
+
+.table-compact {
+  table-layout: fixed;
+}
+
+.table-compact td {
+  overflow-wrap: anywhere;
+}
+
+.table-compact .delta {
+  white-space: normal;
+}
+
+.table-compact th {
+  overflow: hidden;
+  white-space: nowrap;
+}

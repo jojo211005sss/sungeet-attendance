@@ -445,6 +445,24 @@ app.put("/api/website/shows/:id", ...websiteGuard, async (req, res) => {
   }
 });
 
+// Which team played each published show, for Reports → Teams. Teams live in
+// the website database; a show only has a team once it's published with one.
+app.get("/api/reports/teams", ...websiteGuard, async (_req, res) => {
+  try {
+    const [teams, links] = await Promise.all([
+      websiteSql`SELECT id, name FROM teams ORDER BY sort_order, name`,
+      websiteSql`SELECT source_show_id, team_id FROM shows WHERE source_show_id IS NOT NULL AND team_id IS NOT NULL`
+    ]);
+    return res.json({
+      teams: teams.map((t) => ({ id: String(t.id), name: t.name })),
+      links: links.map((l) => ({ show_id: String(l.source_show_id), team_id: String(l.team_id) }))
+    });
+  } catch (error) {
+    console.error("reports/teams error:", error);
+    return res.status(500).json({ message: "Could not load teams" });
+  }
+});
+
 // Remove a show from the website. The gig itself is untouched.
 app.delete("/api/website/shows/:id", ...websiteGuard, async (req, res) => {
   try {

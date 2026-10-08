@@ -5,8 +5,11 @@ import {
   ArrowRight,
   CalendarBlank,
   CalendarCheck,
+  ArrowsLeftRight,
+  CaretDown,
   CaretLeft,
   CaretRight,
+  CaretUp,
   ChartBar,
   Check,
   CheckCircle,
@@ -20,6 +23,7 @@ import {
   House,
   Image,
   MagnifyingGlass,
+  MapPin,
   MusicNotes,
   PencilSimple,
   Plus,
@@ -122,6 +126,7 @@ function DataProvider({ children, token, user, onUnauthorized }) {
     idle(() => {
       api("/website/data", { token, timeout: 25000 }).then((d) => writeCache(user, "website", d)).catch(() => {});
       api("/website/floaters", { token, timeout: 25000 }).then((d) => writeCache(user, "floaters", d.floaters || [])).catch(() => {});
+      api("/reports/teams", { token, timeout: 25000 }).then((d) => writeCache(user, "reportTeams", d)).catch(() => {});
     });
   }, [state.initialLoadDone, token, user]);
 
@@ -1738,113 +1743,266 @@ function ActivityPage({ user }) {
 }
 
 /* ==========================================================================
-   REPORTS (admin): who performed and what they're owed, per month
+   REPORTS (admin): shows, attendance and pay by venue, team, singer or
+   manager, for a month, a year or all time, with comparisons
    ========================================================================== */
 
 function ReportsPage() {
-  const { users, shows, initialLoadDone, error } = useData();
-  const months = useMemo(() => {
-    const set = new Set(shows.map((s) => s.date.slice(0, 7)));
-    set.add(todayIST().slice(0, 7));
-    return [...set].sort();
-  }, [shows]);
-  const [month, setMonth] = useState(() => defaultMonth(shows));
+  const { initialLoadDone, error } = useData();
+  const model = useReportModel();
+  const [period, setPeriod] = useState(() => ({ kind: "month", value: todayIST().slice(0, 7) }));
+  const [compare, setCompare] = useState("none"); // none | prev | lastyear
+  const [view, setView] = useState("overview");
+  const [open, setOpen] = useState(null); // { dim, key }
 
   if (!initialLoadDone) return error ? <LoadError /> : <PageSkeleton />;
 
-  const activeMonth = months.includes(month) ? month : months.at(-1);
-  const monthShows = shows.filter((s) => s.date.startsWith(activeMonth));
-  const rows = users
-    .filter((u) => u.role === "employee")
-    .map((singer) => {
-      const assigned = monthShows.filter((s) => s.employee_ids?.includes(singer.id) || s.employees.some((e) => e.id === singer.id));
-      const entries = assigned.map((s) => ({ show: s, entry: s.attendance.find((a) => a.user_id === singer.id) }));
-      const approved = entries.filter((x) => x.entry?.approval_status === "approved");
-      return {
-        singer,
-        assigned: assigned.length,
-        marked: entries.filter((x) => x.entry).length,
-        approved: approved.length,
-        pay: approved.reduce((sum, x) => sum + (Number(x.show.employee_pay?.[String(singer.id)]) || 0), 0)
-      };
-    })
-    .sort((a, b) => b.pay - a.pay || b.approved - a.approved || a.singer.name.localeCompare(b.singer.name));
-  const totals = rows.reduce((t, r) => ({ assigned: t.assigned + r.assigned, marked: t.marked + r.marked, approved: t.approved + r.approved, pay: t.pay + r.pay }), { assigned: 0, marked: 0, approved: 0, pay: 0 });
+  const cmpPeriod = comparisonPeriod(period, compare);
+  const setKind = (kind) => {
+    if (kind === "month") setPeriod({ kind, value: model.months.at(-1) });
+    if (kind === "year") setPeriod({ kind, value: (period.value || todayIST()).slice(0, 4) });
+    if (kind === "all") {
+      setPeriod({ kind, value: "" });
+      setCompare("none");
+    }
+  };
+  const compareOptions = period.kind === "month"
+    ? [["none", "Off"], ["prev", shortMonth(shiftMonth(period.value, -1))], ["lastyear", shortMonth(shiftMonth(period.value, -12))]]
+    : period.kind === "year"
+      ? [["none", "Off"], ["lastyear", String(Number(period.value) - 1)]]
+      : [];
 
   return (
     <>
-      <PageHead title="Reports" sub="Approved shows and pay per singer. Only approved attendance counts." actions={<ExportButton />} />
+      <PageHead title="Reports" sub="Shows, attendance and pay by venue, team, singer or manager." actions={<ExportButton />} />
 
-      <div className="mb-3 flex justify-end">
-        <MonthStepper months={months} value={activeMonth} onChange={setMonth} />
+      <section className="card card-pad mb-4 space-y-3 lg:mb-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="seg" role="group" aria-label="Period">
+            {[["month", "Month"], ["year", "Year"], ["all", "All time"]].map(([kind, label]) => (
+              <button key={kind} aria-pressed={period.kind === kind} onClick={() => setKind(kind)}>{label}</button>
+            ))}
+          </div>
+          {period.kind === "month" && (
+            <MonthStepper months={model.months} value={period.value} onChange={(value) => setPeriod({ kind: "month", value })} />
+          )}
+          {period.kind === "year" && (
+            <MonthStepper months={model.years} value={period.value} format={(y) => y} onChange={(value) => setPeriod({ kind: "year", value })} />
+          )}
+        </div>
+        {compareOptions.length > 0 && (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <span className="flex items-center gap-1.5 text-[13px] font-medium muted"><ArrowsLeftRight size={15} /> Compare</span>
+            <div className="seg w-full sm:w-auto" role="group" aria-label="Compare with">
+              {compareOptions.map(([id, label]) => (
+                <button key={id} aria-pressed={compare === id} onClick={() => setCompare(id)}>{label}</button>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <div className="chips mb-4">
+        {REPORT_VIEWS.map((v) => (
+          <button key={v.id} className={`chip ${view === v.id ? "chip-on" : ""}`} onClick={() => setView(v.id)}>{v.label}</button>
+        ))}
       </div>
 
-      <div className="kpis mb-4 lg:mb-6">
-        <Kpi label="Shows" value={monthShows.length} foot={monthLabel(activeMonth)} />
-        <Kpi label="Spots marked" value={`${totals.marked}/${totals.assigned}`} foot="Marked of assigned" />
-        <Kpi label="Approved" value={totals.approved} foot="Counted for pay" />
-        <Kpi label="Pay due" value={inr(totals.pay)} foot="Approved shows" />
+      {view === "overview" ? (
+        <ReportOverview model={model} period={period} cmpPeriod={cmpPeriod} onSeeAll={setView} onOpen={setOpen} />
+      ) : (
+        <ReportBreakdown model={model} dimId={view} period={period} cmpPeriod={cmpPeriod} onOpen={(key) => setOpen({ dim: view, key })} />
+      )}
+
+      {open && (
+        <ReportEntitySheet model={model} dimId={open.dim} entityKey={open.key} period={period} onClose={() => setOpen(null)} />
+      )}
+    </>
+  );
+}
+
+function ReportOverview({ model, period, cmpPeriod, onSeeAll, onOpen }) {
+  const [metric, setMetric] = useState("pay");
+  const cur = summarize(slotsIn(model.slots, period));
+  const cmp = cmpPeriod ? summarize(slotsIn(model.slots, cmpPeriod)) : null;
+  const vs = cmpPeriod ? `vs ${periodShort(cmpPeriod)}` : periodLabel(period);
+  const months = chartMonths(period, model.months);
+
+  return (
+    <div className="space-y-4 lg:space-y-6">
+      <div className="kpis">
+        <Kpi label="Shows" value={cur.shows} foot={cmp ? <Delta cur={cur.shows} cmp={cmp.shows} suffix={vs} /> : vs} />
+        <Kpi label="Spots approved" value={`${cur.approved}/${cur.due}`} foot={cmp ? <Delta cur={cur.approved} cmp={cmp.approved} suffix={vs} /> : "Approved of spots played"} />
+        <Kpi label="Attendance rate" value={pct(cur.rate)} foot={cmp ? <Delta cur={cur.rate} cmp={cmp.rate} kind="rate" suffix={vs} /> : "Approved ÷ spots played"} />
+        <Kpi label="Pay due" value={inr(cur.pay)} foot={cmp ? <Delta cur={cur.pay} cmp={cmp.pay} kind="money" suffix={vs} /> : "Approved shows only"} />
       </div>
+
+      <section className="card">
+        <div className="card-head flex-wrap">
+          <h2 className="card-title">Monthly trend</h2>
+          <div className="seg" role="group" aria-label="Chart measure">
+            {CHART_METRICS.map((m) => (
+              <button key={m.id} aria-pressed={metric === m.id} onClick={() => setMetric(m.id)}>{m.label}</button>
+            ))}
+          </div>
+        </div>
+        <div className="card-pad">
+          <TrendChart
+            months={months}
+            metric={metric}
+            series={[
+              { label: periodLabel(period) === "All time" ? "Last 12 months" : "This period", slots: model.slots },
+              ...(cmpPeriod ? [{ label: "A year earlier", slots: model.slots, shift: -12 }] : [])
+            ]}
+          />
+        </div>
+      </section>
+
+      <div className="grid items-start gap-4 lg:grid-cols-3 lg:gap-6">
+        {["venue", "team", "singer"].map((dimId) => (
+          <TopList key={dimId} model={model} dimId={dimId} period={period} onSeeAll={() => onSeeAll(dimId)} onOpen={(key) => onOpen({ dim: dimId, key })} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TopList({ model, dimId, period, onSeeAll, onOpen }) {
+  const dim = model.dims[dimId];
+  const rows = entityRows(model, dimId, period, null)
+    .filter((r) => r.cur.spots > 0)
+    .sort((a, b) => b.cur.pay - a.cur.pay || b.cur.approved - a.cur.approved)
+    .slice(0, 5);
+
+  return (
+    <section className="card overflow-hidden">
+      <div className="card-head">
+        <h2 className="card-title">Top {dim.label.toLowerCase()}</h2>
+        <button className="btn btn-ghost btn-sm" onClick={onSeeAll}>See all <ArrowRight size={14} /></button>
+      </div>
+      {dimId === "team" && !model.teamsLoaded ? (
+        <ListSkeleton rows={2} />
+      ) : rows.length === 0 ? (
+        <Empty title={`No ${dim.label.toLowerCase()} yet`} copy={dimId === "team" ? "Teams count once a show is published with a team." : "Nothing in this period."} />
+      ) : (
+        rows.map((r) => (
+          <button key={r.key} className="row" onClick={() => onOpen(r.key)}>
+            <EntityIcon dimId={dimId} name={r.name} />
+            <div className="row-main">
+              <p className="row-title">{r.name}</p>
+              <p className="row-sub">{plural(r.cur.shows, "show")} · {pct(r.cur.rate)} attended</p>
+            </div>
+            <span className="text-[13px] font-semibold">{inr(r.cur.pay)}</span>
+          </button>
+        ))
+      )}
+    </section>
+  );
+}
+
+const SORTS = [
+  ["pay", "Pay due"],
+  ["shows", "Shows"],
+  ["approved", "Approved"],
+  ["rate", "Attendance rate"],
+  ["name", "Name"]
+];
+
+function ReportBreakdown({ model, dimId, period, cmpPeriod, onOpen }) {
+  const [sort, setSort] = useState("pay");
+  const [query, setQuery] = useState("");
+  const dim = model.dims[dimId];
+  const q = query.trim().toLowerCase();
+  const rows = entityRows(model, dimId, period, cmpPeriod)
+    .filter((r) => !q || r.name.toLowerCase().includes(q))
+    .sort((a, b) => (sort === "name" ? a.name.localeCompare(b.name) : (b.cur[sort] ?? -1) - (a.cur[sort] ?? -1) || a.name.localeCompare(b.name)));
+  const total = summarize(slotsIn(model.slots, period));
+  const totalCmp = cmpPeriod ? summarize(slotsIn(model.slots, cmpPeriod)) : null;
+
+  return (
+    <>
+      <div className="mb-3 grid gap-2 sm:flex sm:items-center sm:justify-between">
+        <div className="relative sm:w-72">
+          <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 subtle" />
+          <input className="input !pl-9" placeholder={`Search ${dim.label.toLowerCase()}`} value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <label className="flex items-center gap-2 text-[13px] muted">
+          Sort by
+          <select className="input !min-h-9 !w-auto" value={sort} onChange={(e) => setSort(e.target.value)}>
+            {SORTS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+        </label>
+      </div>
+
+      {dimId === "team" && (
+        <p className="alert tone-neutral mb-3">Teams come from the website: a show counts for a team once it's published with "Team playing" set. Everything else is under "No team".</p>
+      )}
 
       <section className="card overflow-hidden">
-        {rows.length === 0 ? (
-          <Empty icon={ChartBar} title="No singers yet" copy="Add singers in Team to see reports." />
+        {dimId === "team" && !model.teamsLoaded ? (
+          <ListSkeleton />
+        ) : rows.length === 0 ? (
+          <Empty icon={ChartBar} title={`No ${dim.label.toLowerCase()} found`} copy="Try another period or search." />
         ) : (
           <>
-            {/* Phones: one row per singer. */}
             <div className="lg:hidden">
               {rows.map((r) => (
-                <div key={r.singer.id} className="row">
-                  <Avatar name={r.singer.name} />
+                <button key={r.key} className="row" onClick={() => onOpen(r.key)}>
+                  <EntityIcon dimId={dimId} name={r.name} />
                   <div className="row-main">
-                    <p className="row-title">{r.singer.name}</p>
-                    <p className="row-sub">{r.approved} approved · {r.marked}/{r.assigned} marked</p>
+                    <p className="row-title">{r.name}</p>
+                    <p className="row-sub">{plural(r.cur.shows, "show")} · {r.cur.approved}/{r.cur.due} approved · {pct(r.cur.rate)}</p>
                   </div>
-                  <span className="font-semibold">{inr(r.pay)}</span>
-                </div>
+                  <div className="flex flex-none flex-col items-end">
+                    <span className="text-[13px] font-semibold">{inr(r.cur.pay)}</span>
+                    {r.cmp && <Delta cur={r.cur.pay} cmp={r.cmp.pay} kind="money" compact />}
+                  </div>
+                </button>
               ))}
               <div className="row bg-surface-2 font-semibold">
-                <span className="row-main">Total</span>
-                <span>{inr(totals.pay)}</span>
+                <span className="row-main">Total · {plural(total.shows, "show")}</span>
+                <span>{inr(total.pay)}</span>
               </div>
             </div>
-            {/* Desktop: a proper table. */}
             <table className="table hidden lg:table">
               <thead>
                 <tr>
-                  <th>Singer</th>
-                  <th className="num">Assigned</th>
-                  <th className="num">Marked</th>
+                  <th>{dim.one[0].toUpperCase() + dim.one.slice(1)}</th>
+                  <th className="num">Shows</th>
+                  <th className="num">Spots</th>
                   <th className="num">Approved</th>
+                  <th className="num">Rate</th>
                   <th className="num">Pay due</th>
+                  {cmpPeriod && <th className="num">vs {periodShort(cmpPeriod)}</th>}
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.singer.id}>
+                  <tr key={r.key} className="cursor-pointer hover:bg-[var(--surface-2)]" onClick={() => onOpen(r.key)}>
                     <td>
                       <div className="flex items-center gap-2.5">
-                        <Avatar name={r.singer.name} size="sm" />
-                        <div>
-                          <p className="font-medium">{r.singer.name}</p>
-                          <p className="text-xs muted">{r.singer.username}</p>
-                        </div>
+                        <EntityIcon dimId={dimId} name={r.name} size="sm" />
+                        <span className="font-medium">{r.name}</span>
                       </div>
                     </td>
-                    <td className="num">{r.assigned}</td>
-                    <td className="num">{r.marked}</td>
-                    <td className="num">{r.approved}</td>
-                    <td className="num font-semibold">{inr(r.pay)}</td>
+                    <td className="num">{r.cur.shows}</td>
+                    <td className="num">{r.cur.spots}</td>
+                    <td className="num">{r.cur.approved}</td>
+                    <td className="num">{pct(r.cur.rate)}</td>
+                    <td className="num font-semibold">{inr(r.cur.pay)}</td>
+                    {cmpPeriod && <td className="num"><Delta cur={r.cur.pay} cmp={r.cmp.pay} kind="money" compact /></td>}
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr>
                   <td>Total</td>
-                  <td className="num">{totals.assigned}</td>
-                  <td className="num">{totals.marked}</td>
-                  <td className="num">{totals.approved}</td>
-                  <td className="num">{inr(totals.pay)}</td>
+                  <td className="num">{total.shows}</td>
+                  <td className="num">{total.spots}</td>
+                  <td className="num">{total.approved}</td>
+                  <td className="num">{pct(total.rate)}</td>
+                  <td className="num">{inr(total.pay)}</td>
+                  {cmpPeriod && <td className="num"><Delta cur={total.pay} cmp={totalCmp.pay} kind="money" compact /></td>}
                 </tr>
               </tfoot>
             </table>
@@ -1854,6 +2012,398 @@ function ReportsPage() {
     </>
   );
 }
+
+/* One venue / team / singer / manager: its numbers, trend, and a comparison
+   against an earlier period or another of the same kind. */
+function ReportEntitySheet({ model, dimId, entityKey, period, onClose }) {
+  const dim = model.dims[dimId];
+  const name = dim.nameOf(entityKey);
+  const [mode, setMode] = useState(period.kind === "all" ? "other" : "lastyear"); // prev | lastyear | other
+  const [otherKey, setOtherKey] = useState("");
+  const [metric, setMetric] = useState("pay");
+
+  const mine = model.slots.filter((s) => dim.keyOf(s) === entityKey);
+  const others = entityRows(model, dimId, period, null).filter((r) => r.key !== entityKey).sort((a, b) => a.name.localeCompare(b.name));
+  const otherSlots = otherKey ? model.slots.filter((s) => dim.keyOf(s) === otherKey) : [];
+
+  const cur = summarize(slotsIn(mine, period));
+  let cmp = null;
+  let cmpLabel = "";
+  if (mode === "other" && otherKey) {
+    cmp = summarize(slotsIn(otherSlots, period));
+    cmpLabel = dim.nameOf(otherKey);
+  } else if (mode !== "other" && period.kind !== "all") {
+    const p = comparisonPeriod(period, mode);
+    cmp = summarize(slotsIn(mine, p));
+    cmpLabel = periodLabel(p);
+  }
+
+  const months = chartMonths(period, model.months);
+  const series = [{ label: name, slots: mine }];
+  if (mode === "other" && otherKey) series.push({ label: cmpLabel, slots: otherSlots });
+  else if (mode !== "other" && period.kind !== "all") series.push({ label: "A year earlier", slots: mine, shift: -12 });
+
+  // Who / where inside this entity.
+  const innerDimId = dimId === "singer" ? "venue" : "singer";
+  const inner = model.dims[innerDimId];
+  const periodSlots = slotsIn(mine, period);
+  const innerRows = Object.entries(groupBy(periodSlots, inner.keyOf))
+    .map(([key, list]) => ({ key, name: inner.nameOf(key), s: summarize(list) }))
+    .sort((a, b) => b.s.pay - a.s.pay || b.s.approved - a.s.approved);
+  const showsInPeriod = [...new Map(periodSlots.map((s) => [s.show.id, s.show])).values()].sort((a, b) => showStart(b) - showStart(a));
+
+  const metrics = [
+    ["Shows", cur.shows, cmp?.shows, "count"],
+    ["Spots", cur.spots, cmp?.spots, "count"],
+    ["Approved", cur.approved, cmp?.approved, "count"],
+    ["Rejected", cur.rejected, cmp?.rejected, "count"],
+    ["Attendance rate", cur.rate, cmp?.rate, "rate"],
+    ["Pay due", cur.pay, cmp?.pay, "money"],
+    ["Pay planned", cur.payPlanned, cmp?.payPlanned, "money"]
+  ];
+  const fmt = (v, kind) => (kind === "money" ? inr(v) : kind === "rate" ? pct(v) : v ?? 0);
+
+  return (
+    <Sheet title={name} subtitle={`${dim.one[0].toUpperCase() + dim.one.slice(1)} · ${periodLabel(period)}`} onClose={onClose}>
+      <h3 className="section-label mb-2">Compare with</h3>
+      <div className="seg mb-2 w-full" role="group" aria-label="Compare with">
+        {period.kind === "month" && <button aria-pressed={mode === "prev"} onClick={() => setMode("prev")}>Previous month</button>}
+        {period.kind !== "all" && <button aria-pressed={mode === "lastyear"} onClick={() => setMode("lastyear")}>Last year</button>}
+        <button aria-pressed={mode === "other"} onClick={() => setMode("other")}>Another {dim.one}</button>
+      </div>
+      {mode === "other" && (
+        <select className="input mb-2" value={otherKey} onChange={(e) => setOtherKey(e.target.value)}>
+          <option value="">Choose a {dim.one}</option>
+          {others.map((o) => <option key={o.key} value={o.key}>{o.name}</option>)}
+        </select>
+      )}
+
+      <div className="card mt-3 overflow-hidden">
+        <table className="table table-compact">
+          <thead>
+            <tr>
+              <th></th>
+              <th className="num"><Swatch color={SERIES_COLORS[0]} />{cmp ? "This" : periodLabel(period)}</th>
+              {cmp && <th className="num"><Swatch color={SERIES_COLORS[1]} /><span className="inline-block max-w-[calc(100%-1rem)] truncate align-bottom">{cmpLabel}</span></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {metrics.map(([label, a, b, kind]) => (
+              <tr key={label}>
+                <td className="muted">{label}</td>
+                <td className="num font-semibold">{fmt(a, kind)}</td>
+                {cmp && (
+                  <td className="num">
+                    {fmt(b, kind)}
+                    {/* How "this" differs from the comparison. */}
+                    <span className="block"><Delta cur={a} cmp={b} kind={kind} compact /></span>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mb-2 mt-6 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="section-label">Monthly trend</h3>
+        <div className="seg" role="group" aria-label="Chart measure">
+          {CHART_METRICS.map((m) => (
+            <button key={m.id} aria-pressed={metric === m.id} onClick={() => setMetric(m.id)}>{m.label}</button>
+          ))}
+        </div>
+      </div>
+      <div className="card card-pad">
+        <TrendChart months={months} metric={metric} series={series} />
+      </div>
+
+      {innerRows.length > 0 && (
+        <>
+          <h3 className="section-label mb-2 mt-6">{inner.label} · {periodLabel(period)}</h3>
+          <div className="card overflow-hidden">
+            {innerRows.map((r) => (
+              <div key={r.key} className="row">
+                <EntityIcon dimId={innerDimId} name={r.name} size="sm" />
+                <div className="row-main">
+                  <p className="row-title">{r.name}</p>
+                  <p className="row-sub">{r.s.approved}/{r.s.due} approved · {plural(r.s.shows, "show")}</p>
+                </div>
+                <span className="text-[13px] font-semibold">{inr(r.s.pay)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {showsInPeriod.length > 0 && (
+        <>
+          <h3 className="section-label mb-2 mt-6">Shows · {periodLabel(period)}</h3>
+          <div className="card overflow-hidden">
+            {showsInPeriod.slice(0, 50).map((show) => {
+              const s = summarize(periodSlots.filter((x) => x.show.id === show.id));
+              return (
+                <div key={show.id} className="row">
+                  <DateTile date={show.date} />
+                  <div className="row-main">
+                    <p className="row-title">{show.location}</p>
+                    <p className="row-sub">{formatTime(show.time)} · {s.approved}/{s.spots} approved</p>
+                  </div>
+                  <span className="text-[13px] font-medium">{inr(s.pay)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </Sheet>
+  );
+}
+
+/* Column chart, one or two series. Tap or hover a month to read it. */
+function TrendChart({ months, metric, series }) {
+  const [active, setActive] = useState(months.length - 1);
+  const def = CHART_METRICS.find((m) => m.id === metric);
+  const values = series.map((s) => {
+    const byMonth = groupBy(s.slots, (slot) => slot.show.date.slice(0, 7));
+    return months.map((m) => def.value(summarize(byMonth[s.shift ? shiftMonth(m, s.shift) : m] || [])));
+  });
+  const max = niceMax(Math.max(1, ...values.flat()));
+  const ticks = [max, max / 2, 0];
+  const i = Math.min(active, months.length - 1);
+
+  return (
+    <div>
+      <div className="mb-3 flex min-h-[2.5rem] flex-wrap items-end gap-x-5 gap-y-1">
+        <span className="w-full text-xs muted">{monthLabel(months[i])}</span>
+        {series.map((s, k) => (
+          <span key={k} className="flex items-center gap-1.5 text-[13px]">
+            <Swatch color={SERIES_COLORS[k]} />
+            <span className="muted">{s.label}{s.shift ? ` (${monthLabel(shiftMonth(months[i], s.shift))})` : ""}</span>
+            <span className="font-semibold">{def.format(values[k][i])}</span>
+          </span>
+        ))}
+      </div>
+      <div className="trend">
+        <div className="trend-axis" aria-hidden="true">
+          {ticks.map((t) => <span key={t}>{def.short(t)}</span>)}
+        </div>
+        <div className="trend-plot" onMouseLeave={() => setActive(months.length - 1)}>
+          {ticks.map((t) => <div key={t} className="trend-grid" style={{ bottom: `${(t / max) * 100}%` }} />)}
+          {months.map((m, idx) => (
+            <button
+              key={m}
+              className={`trend-col ${idx === i ? "trend-col-on" : ""}`}
+              onMouseEnter={() => setActive(idx)}
+              onFocus={() => setActive(idx)}
+              onClick={() => setActive(idx)}
+              aria-label={`${monthLabel(m)}: ${series.map((s, k) => `${s.label} ${def.format(values[k][idx])}`).join(", ")}`}
+            >
+              <span className="trend-bars">
+                {series.map((s, k) => (
+                  <span key={k} className="trend-bar" style={{ height: `${(values[k][idx] / max) * 100}%`, minHeight: values[k][idx] > 0 ? 2 : 0, background: SERIES_COLORS[k] }} />
+                ))}
+              </span>
+              <span className="trend-label">{fmtDate(`${m}-01`, { month: "short" })}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Delta({ cur, cmp, kind = "count", suffix, compact = false }) {
+  if (kind === "rate" && (cur == null || cmp == null)) return <span className="delta">—{suffix ? ` ${suffix}` : ""}</span>;
+  const a = Number(cur) || 0;
+  const b = Number(cmp) || 0;
+  const diff = a - b;
+  const Icon = diff > 0 ? CaretUp : CaretDown;
+  let text;
+  if (diff === 0) text = "No change";
+  else if (kind === "rate") text = `${Math.abs(Math.round(diff * 100))} pts`;
+  else if (kind === "money") text = inr(Math.abs(diff));
+  else text = String(Math.abs(diff));
+  const share = kind !== "rate" && b > 0 && diff !== 0 && !compact ? ` (${Math.round((diff / b) * 100)}%)` : "";
+  return (
+    <span className="delta">
+      {diff !== 0 && <Icon size={11} weight="fill" />}
+      {text}{share}{suffix ? ` ${suffix}` : ""}
+    </span>
+  );
+}
+
+function Swatch({ color }) {
+  return <span className="mr-1.5 inline-block h-2.5 w-2.5 flex-none rounded-[3px] align-baseline" style={{ background: color }} aria-hidden="true" />;
+}
+
+function EntityIcon({ dimId, name, size }) {
+  if (dimId === "singer" || dimId === "manager") return <Avatar name={name} size={size} />;
+  const Icon = dimId === "venue" ? MapPin : UsersThree;
+  return <span className={`thumb ${size === "sm" ? "!h-7 !w-7" : ""}`}><Icon size={size === "sm" ? 15 : 18} /></span>;
+}
+
+/* ---------- report model ---------- */
+
+const REPORT_VIEWS = [
+  { id: "overview", label: "Overview" },
+  { id: "venue", label: "Venues" },
+  { id: "team", label: "Teams" },
+  { id: "singer", label: "Singers" },
+  { id: "manager", label: "Managers" }
+];
+
+// Validated pair (dataviz palette check, light surface): this period, comparison.
+const SERIES_COLORS = ["#b0652a", "#2f55a4"];
+
+const CHART_METRICS = [
+  { id: "pay", label: "Pay due", value: (s) => s.pay, format: (v) => inr(v), short: (v) => compactInr(v) },
+  { id: "shows", label: "Shows", value: (s) => s.shows, format: (v) => String(v), short: (v) => String(Math.round(v)) },
+  { id: "approved", label: "Approved", value: (s) => s.approved, format: (v) => String(v), short: (v) => String(Math.round(v)) }
+];
+
+function useReportModel() {
+  const { shows, users, token, user } = useData();
+  const [teamData, setTeamData] = useState(() => readCache(user, "reportTeams"));
+
+  useEffect(() => {
+    api("/reports/teams", { token, timeout: 25000 })
+      .then((d) => {
+        writeCache(user, "reportTeams", d);
+        setTeamData(d);
+      })
+      .catch(() => setTeamData((d) => d || { teams: [], links: [] }));
+  }, [token, user]);
+
+  return useMemo(() => {
+    const userNames = Object.fromEntries(users.map((u) => [String(u.id), u.name]));
+    const teamNames = Object.fromEntries((teamData?.teams || []).map((t) => [String(t.id), t.name]));
+    const teamByShow = Object.fromEntries((teamData?.links || []).map((l) => [String(l.show_id), String(l.team_id)]));
+    const venueNames = {};
+    for (const show of shows) venueNames[venueKey(show.location)] ??= show.location.trim();
+
+    // One row per singer per show: everything is summed from these.
+    const slots = shows.flatMap((show) =>
+      (show.employee_ids || show.employees.map((e) => e.id)).map((id) => ({
+        show,
+        singerId: id,
+        status: show.attendance.find((a) => a.user_id === id)?.approval_status || null,
+        pay: Number(show.employee_pay?.[String(id)]) || 0
+      }))
+    );
+
+    const dims = {
+      venue: { label: "Venues", one: "venue", keyOf: (s) => venueKey(s.show.location), nameOf: (k) => venueNames[k] || k, always: [] },
+      team: {
+        label: "Teams",
+        one: "team",
+        keyOf: (s) => teamByShow[String(s.show.id)] || "none",
+        nameOf: (k) => (k === "none" ? "No team" : teamNames[k] || "Removed team"),
+        always: Object.keys(teamNames)
+      },
+      singer: {
+        label: "Singers",
+        one: "singer",
+        keyOf: (s) => String(s.singerId),
+        nameOf: (k) => userNames[k] || "Former member",
+        always: users.filter((u) => u.role === "employee").map((u) => String(u.id))
+      },
+      manager: {
+        label: "Managers",
+        one: "manager",
+        keyOf: (s) => String(s.show.manager_id),
+        nameOf: (k) => userNames[k] || "Former manager",
+        always: users.filter((u) => u.role === "manager").map((u) => String(u.id))
+      }
+    };
+
+    const monthSet = new Set(shows.map((s) => s.date.slice(0, 7)));
+    monthSet.add(todayIST().slice(0, 7));
+    const months = [...monthSet].sort();
+    const years = [...new Set(months.map((m) => m.slice(0, 4)))].sort();
+
+    return { slots, dims, months, years, teamsLoaded: !!teamData };
+  }, [shows, users, teamData]);
+}
+
+function entityRows(model, dimId, period, cmpPeriod) {
+  const dim = model.dims[dimId];
+  const cur = groupBy(slotsIn(model.slots, period), dim.keyOf);
+  const cmp = cmpPeriod ? groupBy(slotsIn(model.slots, cmpPeriod), dim.keyOf) : {};
+  const keys = new Set([...Object.keys(cur), ...Object.keys(cmp), ...dim.always]);
+  return [...keys].map((key) => ({
+    key,
+    name: dim.nameOf(key),
+    cur: summarize(cur[key] || []),
+    cmp: cmpPeriod ? summarize(cmp[key] || []) : null
+  }));
+}
+
+function summarize(slots) {
+  const shows = new Set();
+  const out = { shows: 0, spots: 0, due: 0, marked: 0, approved: 0, rejected: 0, pay: 0, payPlanned: 0, rate: null };
+  for (const s of slots) {
+    shows.add(s.show.id);
+    out.spots += 1;
+    out.payPlanned += s.pay;
+    if (hasStarted(s.show)) out.due += 1;
+    if (s.status) out.marked += 1;
+    if (s.status === "rejected") out.rejected += 1;
+    if (s.status === "approved") {
+      out.approved += 1;
+      out.pay += s.pay;
+    }
+  }
+  out.shows = shows.size;
+  out.rate = out.due ? out.approved / out.due : null;
+  return out;
+}
+
+const slotsIn = (slots, period) => (period.kind === "all" ? slots : slots.filter((s) => s.show.date.startsWith(period.value)));
+const venueKey = (location) => String(location || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+function groupBy(list, keyOf) {
+  const out = {};
+  for (const item of list) (out[keyOf(item)] ||= []).push(item);
+  return out;
+}
+
+function shiftMonth(month, by) {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + by, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function shiftPeriod(period, by) {
+  if (period.kind === "month") return { kind: "month", value: shiftMonth(period.value, by) };
+  if (period.kind === "year") return { kind: "year", value: String(Number(period.value) + by) };
+  return period;
+}
+
+function comparisonPeriod(period, mode) {
+  if (mode === "none" || period.kind === "all") return null;
+  if (mode === "prev") return shiftPeriod(period, -1);
+  return period.kind === "month" ? shiftPeriod(period, -12) : shiftPeriod(period, -1);
+}
+
+const shortMonth = (month) => fmtDate(`${month}-01`, { month: "short", year: "numeric" });
+const periodShort = (period) => (period.kind === "month" ? shortMonth(period.value) : periodLabel(period));
+const periodLabel = (period) => (period.kind === "month" ? monthLabel(period.value) : period.kind === "year" ? period.value : "All time");
+
+/* The 12 months a chart shows: the chosen year, or the year up to the chosen month. */
+function chartMonths(period, dataMonths) {
+  const end = period.kind === "month" ? period.value : period.kind === "year" ? `${period.value}-12` : dataMonths.at(-1);
+  return Array.from({ length: 12 }, (_, i) => shiftMonth(end, i - 11));
+}
+
+function niceMax(value) {
+  const exp = 10 ** Math.floor(Math.log10(value));
+  const n = value / exp;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 4 ? 4 : n <= 5 ? 5 : 10;
+  return step * exp;
+}
+
+const pct = (rate) => (rate == null ? "—" : `${Math.round(rate * 100)}%`);
+const compactInr = (v) => `₹${new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 }).format(v)}`;
 
 function ExportButton() {
   const { token } = useData();
@@ -2667,14 +3217,14 @@ function DateTile({ date }) {
   );
 }
 
-function MonthStepper({ months, value, onChange }) {
+function MonthStepper({ months, value, onChange, format = monthLabel }) {
   const index = months.indexOf(value);
   return (
     <div className="stepper">
       <button onClick={() => onChange(months[index - 1])} disabled={index <= 0} aria-label="Previous month">
         <CaretLeft size={16} weight="bold" />
       </button>
-      <span>{monthLabel(value)}</span>
+      <span>{format(value)}</span>
       <button onClick={() => onChange(months[index + 1])} disabled={index >= months.length - 1} aria-label="Next month">
         <CaretRight size={16} weight="bold" />
       </button>
