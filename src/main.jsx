@@ -278,7 +278,7 @@ function LoginScreen({ onLogin }) {
             <div className="grid grid-cols-2 gap-2 text-xs">
               <button
                 type="button"
-                onClick={() => setForm({ username: "admin@sunggeet.com", password: "dipfYh-pyfqeb-gyhzu1" })}
+                onClick={() => setForm({ username: "admin@sunggeet.com", password: "demo1234" })}
                 className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-2 text-left text-indigo-300 hover:bg-indigo-500/20 transition"
               >
                 <div className="font-semibold text-white">👑 Admin</div>
@@ -286,7 +286,7 @@ function LoginScreen({ onLogin }) {
               </button>
               <button
                 type="button"
-                onClick={() => setForm({ username: "kabir@sunggeet.com", password: "dipfYh-pyfqeb-gyhzu1" })}
+                onClick={() => setForm({ username: "kabir@sunggeet.com", password: "demo1234" })}
                 className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-left text-emerald-300 hover:bg-emerald-500/20 transition"
               >
                 <div className="font-semibold text-white">📋 Manager</div>
@@ -294,7 +294,7 @@ function LoginScreen({ onLogin }) {
               </button>
               <button
                 type="button"
-                onClick={() => setForm({ username: "aarav@sunggeet.com", password: "dipfYh-pyfqeb-gyhzu1" })}
+                onClick={() => setForm({ username: "aarav@sunggeet.com", password: "demo1234" })}
                 className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-left text-amber-300 hover:bg-amber-500/20 transition"
               >
                 <div className="font-semibold text-white">🎤 Singer (Employee)</div>
@@ -302,7 +302,7 @@ function LoginScreen({ onLogin }) {
               </button>
               <button
                 type="button"
-                onClick={() => setForm({ username: "vikram@sunggeet.com", password: "dipfYh-pyfqeb-gyhzu1" })}
+                onClick={() => setForm({ username: "vikram@sunggeet.com", password: "demo1234" })}
                 className="rounded-lg border border-purple-500/30 bg-purple-500/10 p-2 text-left text-purple-300 hover:bg-purple-500/20 transition"
               >
                 <div className="font-semibold text-white">⭐ Superior</div>

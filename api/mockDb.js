@@ -1,5 +1,8 @@
 import bcrypt from "bcryptjs";
 
+// Sample-data mode only: in-memory fake accounts, never a real database.
+export const DEMO_PASSWORD = "demo1234";
+
 // Generates dynamic dates relative to current date so mock data is always fresh
 function getOffsetDate(daysOffset) {
   const d = new Date();
@@ -8,7 +11,7 @@ function getOffsetDate(daysOffset) {
 }
 
 export function createMockSql() {
-  const defaultPassword = bcrypt.hashSync("dipfYh-pyfqeb-gyhzu1", 10);
+  const defaultPassword = bcrypt.hashSync(DEMO_PASSWORD, 10);
 
   let users = [
     { id: 1, name: "SUNGGEET Admin", username: "admin@sunggeet.com", password: defaultPassword, role: "admin" },

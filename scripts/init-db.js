@@ -64,8 +64,12 @@ async function init() {
     console.log("✅ Tables created successfully.");
 
     // 6. Seed Users
-    const defaultSeedPassword = process.env.SEED_PASSWORD || "dipfYh-pyfqeb-gyhzu1";
-    const hashedPassword = bcrypt.hashSync(defaultSeedPassword, 10);
+    // No fallback: a password committed to a public repo is a leaked password.
+    const seedPassword = process.env.SEED_PASSWORD;
+    if (!seedPassword || seedPassword.length < 12) {
+      throw new Error("Set SEED_PASSWORD (12+ characters) in .env before seeding.");
+    }
+    const hashedPassword = bcrypt.hashSync(seedPassword, 10);
     const dummyUsers = [
       { id: 1, name: "SUNGGEET Admin", username: "admin@sunggeet.com", password: hashedPassword, role: "admin" },
       { id: 2, name: "Vikram Malhotra", username: "vikram@sunggeet.com", password: hashedPassword, role: "superior" },
