@@ -2133,44 +2133,44 @@ function PublishShowDialog({ token, show, teams, onClose, onSaved }) {
         </p>
 
         <div className="mt-5 space-y-4">
-          <label className="field">
+          <label className="field-label">
             <span>Venue name shown publicly</span>
-            <input value={form.venue} onChange={set("venue")} placeholder={show.location} />
+            <input className="field" value={form.venue} onChange={set("venue")} placeholder={show.location} />
           </label>
 
-          <label className="field">
+          <label className="field-label">
             <span>City *</span>
-            <input value={form.city} onChange={set("city")} placeholder="New Delhi" />
+            <input className="field" value={form.city} onChange={set("city")} placeholder="New Delhi" />
           </label>
 
-          <label className="field">
+          <label className="field-label">
             <span>Event type *</span>
-            <select value={form.event_type} onChange={set("event_type")}>
+            <select className="field" value={form.event_type} onChange={set("event_type")}>
               {EVENT_TYPES.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
             </select>
           </label>
 
-          <label className="field">
+          <label className="field-label">
             <span>Team playing</span>
-            <select value={form.team_id} onChange={set("team_id")}>
+            <select className="field" value={form.team_id} onChange={set("team_id")}>
               <option value="">— none —</option>
               {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </label>
 
-          <label className="field">
+          <label className="field-label">
             <span>Set name</span>
-            <input value={form.set_name} onChange={set("set_name")} placeholder="Jazz standards, Sufi second set" />
+            <input className="field" value={form.set_name} onChange={set("set_name")} placeholder="Jazz standards, Sufi second set" />
           </label>
 
-          <label className="field">
+          <label className="field-label">
             <span>Note</span>
-            <input value={form.note} onChange={set("note")} placeholder="Two sets, no cover." />
+            <input className="field" value={form.note} onChange={set("note")} placeholder="Two sets, no cover." />
           </label>
 
-          <label className="field">
+          <label className="field-label">
             <span>Ticket link</span>
-            <input value={form.ticket_url} onChange={set("ticket_url")} placeholder="https://…" />
+            <input className="field" value={form.ticket_url} onChange={set("ticket_url")} placeholder="https://…" />
           </label>
 
           <MediaUpload
@@ -2288,17 +2288,17 @@ function TeamDialog({ token, team, onClose, onSaved }) {
         </div>
 
         <div className="mt-5 space-y-4">
-          <label className="field">
+          <label className="field-label">
             <span>Name *</span>
-            <input value={form.name} onChange={set("name")} placeholder="The Tuesday Trio" />
+            <input className="field" value={form.name} onChange={set("name")} placeholder="The Tuesday Trio" />
           </label>
-          <label className="field">
+          <label className="field-label">
             <span>Tagline</span>
-            <input value={form.tagline} onChange={set("tagline")} placeholder="The open-jam house band" />
+            <input className="field" value={form.tagline} onChange={set("tagline")} placeholder="The open-jam house band" />
           </label>
-          <label className="field">
+          <label className="field-label">
             <span>Blurb</span>
-            <textarea rows={3} value={form.blurb} onChange={set("blurb")} />
+            <textarea className="field" rows={3} value={form.blurb} onChange={set("blurb")} />
           </label>
           <MediaUpload
             token={token}
@@ -2309,9 +2309,9 @@ function TeamDialog({ token, team, onClose, onSaved }) {
             url={form.photo_url}
             onChange={({ url }) => setForm((prev) => ({ ...prev, photo_url: url || "" }))}
           />
-          <label className="field">
+          <label className="field-label">
             <span>Showreel URL</span>
-            <input value={form.video_url} onChange={set("video_url")} placeholder="https://…" />
+            <input className="field" value={form.video_url} onChange={set("video_url")} placeholder="https://…" />
           </label>
           {team && (
             <label className="flex items-center gap-3 text-sm">
