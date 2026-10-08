@@ -1,35 +1,38 @@
-# PROGRESS — SUNGGEET Attendance
+# SUNGGEET Attendance
+_Last updated: 2026-10-08_
 
-## Run locally
-- `npm run dev` → web on 5173, API on 4000 (or the "sungeet" preview config in `.claude/launch.json`: web on 5175, since 5173/5174 are used by the `sunggeet main 1` site).
+## What this is
+Attendance and show management for SUNGGEET's live music team: singers mark shows they performed, managers approve, admins run shows, pay, Excel export, and the public website's content (Website tab).
 
-## 2026-10-07 — full QA pass as admin / singer / manager
-Fixed (uncommitted):
-- Add member failed with "users_pkey" error — DB id counter was behind the seeded ids. Ran `scripts/fix-sequences.js`; `init-db.js` now resyncs after seeding.
-- Show dates were one day early when the API ran outside UTC (local Mac in IST). API now forces UTC, same as Vercel.
-- Shows/Data opened on the oldest month (March); now open on the current month.
-- Copy Month broke on days that don't exist in the target month (31st → November); now clamps to the month's last day.
-- Edit/Delete buttons in Admin lists were invisible on phones (hover-only); now always visible on touch.
+## How to run it
+- `npm install`, then `npm run dev` → web on http://localhost:5173, API on http://localhost:4000.
+- Inside Claude Code, the "sungeet" preview in `.claude/launch.json` runs web on **5175** (5173/5174 are used by the `sunggeet main 1` public site) and pins the API to 4000.
+- `.env` needs: `DATABASE_URL`, `WEBSITE_DATABASE_URL`, `JWT_SECRET`, `ALLOWED_ORIGINS`, `SEED_PASSWORD` (see `.env.example`).
+- Live: https://sungeet-attendance.vercel.app. Every push to `main` auto-deploys on Vercel.
 
-Round 2 (same day) — fixed the open issues (uncommitted):
-- Floater photos in admin now load from the public site (`VITE_PUBLIC_SITE_URL`, default https://sungeet-main.vercel.app).
-- Demo March shows now managed by Kabir, with Rhea as a singer (DB + `init-db.js`). API rejects non-singers in a show's singer list.
-- API 500s return plain messages; details stay in server logs.
-- Singers only receive their own pay and attendance (shows list, single show, profile).
-- Marked shows no longer reopen "Confirm attendance"; attendance can't be marked before the show starts (IST).
-- Admin/superior can flip an approved/rejected entry; review errors are shown instead of swallowed.
-- Daily check-in uses the India date.
-- Show ids: no more collisions after deletes or same DDMM next year.
-- Copy Month switches to the new month; approve/mark refresh silently (no skeleton flash, panel stays open).
-- Add-show date defaults to today.
+## Done so far
+- Full QA pass (2026-10-07) as admin, singer and manager; everything below works and is live.
+- Members, shows, per-singer pay (₹), attendance marking, approvals, Copy Month, delete, Excel export (4 sheets), Daily Check-in, mobile layout.
+- Fixes: Add member (DB id counter), dates one day early off-UTC, month filters open on the current month, Copy Month on 31st/Feb, touch-visible row buttons, Add-show defaults to today.
+- Security: singers only see their own pay/attendance; attendance only after the show starts (IST); only singers can be assigned; plain error messages on 500s; collision-free show ids.
+- Admins can flip an approved/rejected decision.
+- Website tab: floater photos load from the public site (`VITE_PUBLIC_SITE_URL`, default https://sungeet-main.vercel.app); image/audio uploads tested end to end incl. the live site; 3MB limit (Vercel's 4.5MB body cap); wav/m4a type fixes; replaced/deleted media is cleaned up (`pruneMedia`).
+- 2026-10-08: removed a hard-coded password GitGuardian flagged on the `mock-db-and-show-pay` branch (`fd8e69c`; demo mode now uses `demo1234`, `init-db.js` requires `SEED_PASSWORD`).
 
-Round 3 — image/audio uploads (Website tab), tested end to end incl. the live site serving /api/media:
-- Upload limit 3MB (was 8MB, but Vercel rejects bodies over 4.5MB, and base64 adds a third). Checked in the browser before uploading.
-- WAV labelled audio/x-wav (Firefox/Windows) and .m4a with no browser type are now accepted; file picker limited to supported types.
-- Replaced/removed/deleted images and clips are now deleted from the website DB (`pruneMedia`), unless still referenced.
+## In progress / next steps
+- Delete the QA test data from the live database: TEST Singer One, TEST Singer Two, TEST Manager, show SGT-0710-01 "TEST Venue Rooftop" (their password is `TEST_ACCOUNTS_PASSWORD` in `.env`).
+- Change the shared seed password on the real accounts (admin, Kabir, Aarav, Naina, Rhea): `scripts/change-password.js`.
+- User to check the Passwords app for any account using the leaked password and change it; mark the GitGuardian alert resolved.
+- Optional: make the GitHub repo private (old history still contains the leaked password, though no account uses it).
+- Optional: Mac-wide git guard in `~/.git-hooks` (blocks commits as the boss outside VMB) is written but switched OFF — needs the user's OK to test and enable (`git config --global core.hooksPath ~/.git-hooks`).
 
-Test data in the DB: TEST Singer One, TEST Singer Two, TEST Manager (password in `.env` as TEST_ACCOUNTS_PASSWORD) and show SGT-0710-01 "TEST Venue Rooftop".
+## Known issues
+- `mock-db-and-show-pay` branch has 13 pre-existing lint errors (`clearTimeout` etc. not defined in eslint globals).
+- Native "Are you sure?" delete prompts can't be clicked through in the Claude browser pane; tested via the API instead.
 
-## 2026-10-08 — leaked password + git identity
-- GitGuardian flagged a hard-coded password in the `mock-db-and-show-pay` branch. Removed in `fd8e69c` (demo mode now uses `demo1234`; `init-db.js` requires `SEED_PASSWORD`). No live account uses the old password; it's still in old history (repo is public).
-- Commits had gone out as the boss (Sukhman) because an AI tool set his email with `git config --global` on 2026-09-26. Global identity is back to sarnjot singh; his identity is set only inside the VMB repo.
+## Decisions & notes
+- Same Neon database is used locally and on Vercel — local testing writes to live data. Name test data with a "TEST" prefix.
+- Website tab writes to the public site's database (`WEBSITE_DATABASE_URL`); changes go live. Test floaters with "Show on the landing page" unticked.
+- Git identity: global is sarnjot singh <282075679+jojo211005sss@users.noreply.github.com>; the boss's identity (Sukhman Narula) is set only inside the VMB repo. Never use `git config --global` for one project. (On 2026-09-26 an Antigravity AI did that, so commits and Vercel/GitGuardian emails went to the boss.)
+- No Claude co-author lines on commits (turned off in `~/.claude/settings.json`).
+- When work is done: commit and push to `main` directly.
