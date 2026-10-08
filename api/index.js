@@ -7,6 +7,11 @@ import writeXlsxFile from "write-excel-file/node";
 import { Buffer } from "node:buffer";
 import { neon } from "@neondatabase/serverless";
 
+// Postgres DATE columns are parsed as local midnight and then serialized with
+// toISOString(); outside UTC (e.g. a dev machine in IST) every show date shifts
+// back a day. Vercel already runs in UTC, so this makes local match production.
+process.env.TZ = "UTC";
+
 if (!process.env.DATABASE_URL) {
   throw new Error("CRITICAL: DATABASE_URL is not set. Please add it to your Vercel Environment Variables.");
 }
@@ -137,6 +142,13 @@ const byId = async (id) => {
 const normalizeUsername =  (username)  => String(username || "").trim().toLowerCase();
 
 const isValidRole = (role) => ["employee", "manager", "admin", "superior"].includes(role);
+
+// Every assigned id must be an existing singer (role "employee").
+const allSingers = async (ids) => {
+  if (!ids.length) return false;
+  const [{ count }] = await sql`SELECT COUNT(*) FROM users WHERE id = ANY(${ids}) AND role = 'employee'`;
+  return Number(count) === ids.length;
+};
 
 const decorateShow = async (show) => {
   try {
@@ -404,6 +416,7 @@ app.put("/api/website/shows/:id", ...websiteGuard, async (req, res) => {
     // one instant. These are Delhi gigs, so Delhi local time is the truth.
     const startsAt = `${source.date} ${source.time}:00+05:30`;
 
+    const [before] = await websiteSql`SELECT poster_url FROM shows WHERE source_show_id = ${sourceId}`;
     const [row] = await websiteSql`
       INSERT INTO shows (starts_at, venue, city, event_type, team_id, set_name,
                          note, ticket_url, poster_url, is_published, source_show_id)
@@ -424,17 +437,21 @@ app.put("/api/website/shows/:id", ...websiteGuard, async (req, res) => {
       RETURNING *
     `;
 
+    if (before) await pruneMedia(mediaIdsIn(before.poster_url));
     return res.json({ website: row });
   } catch (error) {
     console.error("website/shows update error:", error);
-    return res.status(500).json({ message: error.message || "Could not publish show" });
+    return res.status(500).json({ message: "Could not publish show" });
   }
 });
 
 // Remove a show from the website. The gig itself is untouched.
 app.delete("/api/website/shows/:id", ...websiteGuard, async (req, res) => {
   try {
-    await websiteSql`DELETE FROM shows WHERE source_show_id = ${String(req.params.id)}`;
+    const gone = await websiteSql`
+      DELETE FROM shows WHERE source_show_id = ${String(req.params.id)} RETURNING poster_url
+    `;
+    await pruneMedia(gone.flatMap((row) => mediaIdsIn(row.poster_url)));
     return res.json({ ok: true });
   } catch (error) {
     console.error("website/shows delete error:", error);
@@ -447,6 +464,7 @@ app.put("/api/website/teams/:id", ...websiteGuard, async (req, res) => {
     const name = String(req.body.name || "").trim();
     if (!name) return res.status(400).json({ message: "Team name is required" });
 
+    const [before] = await websiteSql`SELECT photo_url, video_url FROM teams WHERE id = ${Number(req.params.id)}`;
     const [team] = await websiteSql`
       UPDATE teams SET
         name = ${name},
@@ -459,6 +477,7 @@ app.put("/api/website/teams/:id", ...websiteGuard, async (req, res) => {
       RETURNING *
     `;
     if (!team) return res.status(404).json({ message: "Team not found" });
+    if (before) await pruneMedia(mediaIdsIn(before.photo_url, before.video_url));
     return res.json({ team });
   } catch (error) {
     console.error("website/teams update error:", error);
@@ -508,12 +527,59 @@ const MEDIA_MIME = {
   audio: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/mp4", "audio/x-m4a", "audio/aac"]
 };
 // Decoded ceiling. The 12mb body limit above leaves room for base64's 33%.
-const MEDIA_MAX_BYTES = 8 * 1024 * 1024;
+// Vercel caps request bodies at 4.5MB and base64 adds a third, so 3MB of file
+// is the most that actually reaches this function in production.
+const MEDIA_MAX_BYTES = 3 * 1024 * 1024;
+
+// Browsers disagree on names for the same format (Firefox/Windows say x-wav).
+const MEDIA_MIME_ALIASES = {
+  "audio/x-wav": "audio/wav",
+  "audio/wave": "audio/wav",
+  "audio/vnd.wave": "audio/wav",
+  "audio/x-aac": "audio/aac",
+  "image/jpg": "image/jpeg",
+  "image/pjpeg": "image/jpeg"
+};
+
+const MEDIA_ID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const mediaIdsIn = (...values) =>
+  values.flatMap((value) => {
+    const match = MEDIA_ID_RE.exec(String(value || ""));
+    return match ? [match[0].toLowerCase()] : [];
+  });
+
+// Uploads are stored in the website database, so a replaced or removed file
+// would otherwise sit there forever. Delete the given ids unless something
+// still points at them. Never fails the request that triggered it.
+const pruneMedia = async (ids) => {
+  const candidates = [...new Set(ids)];
+  if (!candidates.length) return;
+  try {
+    await websiteSql`
+      DELETE FROM media m
+      WHERE m.id::text = ANY(${candidates})
+        AND NOT EXISTS (
+          SELECT 1 FROM floaters f
+          WHERE f.image_id::text = m.id::text OR f.audio_id::text = m.id::text
+             OR f.image_url LIKE '%' || m.id::text || '%' OR f.audio_url LIKE '%' || m.id::text || '%'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM teams t
+          WHERE t.photo_url LIKE '%' || m.id::text || '%' OR t.video_url LIKE '%' || m.id::text || '%'
+        )
+        AND NOT EXISTS (SELECT 1 FROM team_members tm WHERE tm.photo_url LIKE '%' || m.id::text || '%')
+        AND NOT EXISTS (SELECT 1 FROM shows s WHERE s.poster_url LIKE '%' || m.id::text || '%')
+    `;
+  } catch (error) {
+    console.error("media prune error:", error);
+  }
+};
 
 app.post("/api/website/media", ...websiteGuard, async (req, res) => {
   try {
     const kind = String(req.body?.kind || "");
-    const mime = String(req.body?.mime || "").toLowerCase();
+    const rawMime = String(req.body?.mime || "").toLowerCase();
+    const mime = MEDIA_MIME_ALIASES[rawMime] || rawMime;
     const data = String(req.body?.data || "");
     const filename = req.body?.filename ? String(req.body.filename).slice(0, 200) : null;
 
@@ -525,7 +591,7 @@ app.post("/api/website/media", ...websiteGuard, async (req, res) => {
 
     const byteSize = Buffer.byteLength(data, "base64");
     if (byteSize > MEDIA_MAX_BYTES) {
-      return res.status(413).json({ message: "That file is too large (8MB max)" });
+      return res.status(413).json({ message: "That file is too large (3MB max)" });
     }
 
     const rows = await websiteSql`
@@ -601,6 +667,9 @@ app.put("/api/website/floaters/:id", ...websiteGuard, async (req, res) => {
   const f = floaterFields(req.body);
   if (!f.name) return res.status(400).json({ message: "A name is required" });
   try {
+    const [before] = await websiteSql`
+      SELECT image_id, audio_id, image_url, audio_url FROM floaters WHERE id = ${Number(req.params.id)}
+    `;
     await websiteSql`
       UPDATE floaters SET
         name = ${f.name}, role = ${f.role},
@@ -609,6 +678,7 @@ app.put("/api/website/floaters/:id", ...websiteGuard, async (req, res) => {
         sort_order = ${f.sort_order}, is_active = ${f.is_active}
       WHERE id = ${Number(req.params.id)}
     `;
+    if (before) await pruneMedia(mediaIdsIn(before.image_id, before.audio_id, before.image_url, before.audio_url));
     res.json({ ok: true });
   } catch (error) {
     console.error("website/floaters update error:", error);
@@ -618,7 +688,11 @@ app.put("/api/website/floaters/:id", ...websiteGuard, async (req, res) => {
 
 app.delete("/api/website/floaters/:id", ...websiteGuard, async (req, res) => {
   try {
-    await websiteSql`DELETE FROM floaters WHERE id = ${Number(req.params.id)}`;
+    const [gone] = await websiteSql`
+      DELETE FROM floaters WHERE id = ${Number(req.params.id)}
+      RETURNING image_id, audio_id, image_url, audio_url
+    `;
+    if (gone) await pruneMedia(mediaIdsIn(gone.image_id, gone.audio_id, gone.image_url, gone.audio_url));
     res.json({ ok: true });
   } catch (error) {
     console.error("website/floaters delete error:", error);
@@ -698,7 +772,7 @@ app.post("/api/users", authenticate, requireRole("admin", "superior"), async (re
     return res.status(201).json({ user: publicUser(newUser), users: allUsers.map(publicUser) });
   } catch (error) {
     console.error("User creation error:", error);
-    return res.status(500).json({ message: error.message || "Failed to create user" });
+    return res.status(500).json({ message: "Failed to create user" });
   }
 });
 
@@ -728,7 +802,7 @@ app.delete("/api/users/:id", authenticate, requireRole("admin"), async (req, res
     res.json({ users: allUsers.map(publicUser) });
   } catch (error) {
     console.error("User deletion error:", error);
-    res.status(500).json({ message: error.message || "Failed to delete user" });
+    res.status(500).json({ message: "Failed to delete user" });
   }
 });
 
@@ -782,7 +856,7 @@ app.get("/api/shows", authenticate, async (req, res) => {
       };
     });
 
-    res.json({ shows: visibleShows });
+    res.json({ shows: visibleShows.map((show) => forViewer(req.user, show)) });
   } catch (error) {
     console.error("Error fetching shows:", error);
     res.status(500).json({ message: "Failed to load shows" });
@@ -804,14 +878,19 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
       return res.status(400).json({ message: "Date, time, location, and a valid manager are required" });
     }
 
-    if (!employeeIds.length) {
-      return res.status(400).json({ message: "Assign at least one employee singer" });
+    if (!(await allSingers(employeeIds))) {
+      return res.status(400).json({ message: "Assign at least one singer, and only singers" });
     }
 
     const dateCode = date.slice(8, 10) + date.slice(5, 7);
-    const showCountResult = await sql`SELECT COUNT(*) FROM shows WHERE date = ${date}`;
-    const showCountForDay = Number(showCountResult[0].count) + 1;
-    const id = `SGT-${dateCode}-${String(showCountForDay).padStart(2, "0")}`;
+    // Ids carry no year and shows can be deleted, so counting a day's shows can
+    // reuse a taken id. Take the highest existing suffix for this DDMM instead.
+    const prefix = `SGT-${dateCode}-`;
+    const [{ max }] = await sql`
+      SELECT COALESCE(MAX(substring(id from ${prefix.length + 1}::int)::int), 0) AS max
+      FROM shows WHERE id LIKE ${prefix + "%"} AND substring(id from ${prefix.length + 1}::int) ~ '^[0-9]+$'
+    `;
+    const id = `${prefix}${String(Number(max) + 1).padStart(2, "0")}`;
 
     const [newShow] = await sql`
       INSERT INTO shows (id, date, time, location, manager_id, employee_ids, employee_pay)
@@ -827,9 +906,21 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
     return res.status(201).json({ show: await decorateShow(newShow), shows: visibleShows });
   } catch (error) {
     console.error("Show creation error:", error);
-    return res.status(500).json({ message: error.message || "Failed to create show" });
+    return res.status(500).json({ message: "Failed to create show" });
   }
 });
+// Singers only see their own attendance and pay, not their colleagues'.
+const forViewer = (user, show) => {
+  if (user.role !== "employee") return show;
+  const own = String(user.id);
+  const pay = show.employee_pay || {};
+  return {
+    ...show,
+    employee_pay: own in pay ? { [own]: pay[own] } : {},
+    employees: show.employees.map((e) => (e.id === user.id ? e : { ...e, pay: null })),
+    attendance: show.attendance.filter((entry) => entry.user_id === user.id)
+  };
+};
 
 app.get("/api/shows/:id", authenticate, async (req, res) => {
   const showResult = await sql`SELECT * FROM shows WHERE id = ${req.params.id}`;
@@ -843,7 +934,7 @@ app.get("/api/shows/:id", authenticate, async (req, res) => {
     return res.status(403).json({ message: "You do not have access to this show" });
   }
 
-  return res.json({ show: await decorateShow(show) });
+  return res.json({ show: forViewer(req.user, await decorateShow(show)) });
 });
 
 app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), async (req, res) => {
@@ -873,6 +964,10 @@ app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), asyn
       }
     }
 
+    if (req.body.employee_ids !== undefined && !(await allSingers(employeeIds))) {
+      return res.status(400).json({ message: "Assign at least one singer, and only singers" });
+    }
+
     const [updatedShow] = await sql`
       UPDATE shows
       SET date = ${date},
@@ -888,7 +983,7 @@ app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), asyn
     return res.json({ show: await decorateShow(updatedShow) });
   } catch (error) {
     console.error("Show update error:", error);
-    return res.status(500).json({ message: error.message || "Failed to update show" });
+    return res.status(500).json({ message: "Failed to update show" });
   }
 });
 
@@ -907,7 +1002,7 @@ app.delete("/api/shows/:id", authenticate, requireRole("admin"), async (req, res
     res.json({ shows: visibleShows });
   } catch (error) {
     console.error("Show deletion error:", error);
-    res.status(500).json({ message: error.message || "Failed to delete show" });
+    res.status(500).json({ message: "Failed to delete show" });
   }
 });
 
@@ -918,6 +1013,12 @@ app.post("/api/attendance", authenticate, requireRole("employee"), async (req, r
 
   if (!show || !show.employee_ids.includes(req.user.id)) {
     return res.status(404).json({ message: "Assigned show not found" });
+  }
+
+  // Shows are in India time; you can't have attended one that hasn't started.
+  const showDate = show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date;
+  if (new Date(`${showDate}T${show.time}:00+05:30`) > new Date()) {
+    return res.status(400).json({ message: "You can mark attendance once the show has started" });
   }
 
   const existingResult = await sql`
@@ -934,7 +1035,7 @@ app.post("/api/attendance", authenticate, requireRole("employee"), async (req, r
     RETURNING *
   `;
 
-  return res.status(201).json({ attendance: entry, show: await decorateShow(show) });
+  return res.status(201).json({ attendance: entry, show: forViewer(req.user, await decorateShow(show)) });
 });
 
 app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "admin", "superior"), async (req, res) => {
@@ -985,9 +1086,14 @@ app.get("/api/profile", authenticate, async (req, res) => {
       getStats(req.user)
     ]);
 
+    const own = String(req.user.id);
     const allShows = allShowsRaw.map(s => ({
       ...s,
-      date: s.date instanceof Date ? s.date.toISOString().split("T")[0] : s.date
+      date: s.date instanceof Date ? s.date.toISOString().split("T")[0] : s.date,
+      // Singers only see their own pay.
+      ...(req.user.role === "employee" && {
+        employee_pay: own in (s.employee_pay || {}) ? { [own]: s.employee_pay[own] } : {}
+      })
     }));
 
     const filteredAttendance = allAttendance.filter((entry) => {
@@ -1099,8 +1205,11 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
   return res.send(Buffer.from(buffer));
 });
 
+// The team works in India; a UTC date would roll over at 5:30 am IST.
+const indiaToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+
 app.get("/api/activity/today", authenticate, async (req, res) => {
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = indiaToday();
   const userStatusResult = await sql`
     SELECT status FROM daily_activity WHERE user_id = ${req.user.id} AND date = ${todayStr}
   `;
@@ -1128,7 +1237,7 @@ app.post("/api/activity", authenticate, async (req, res) => {
     return res.status(400).json({ message: "Status must be active or inactive" });
   }
 
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = indiaToday();
   
   await sql`
     INSERT INTO daily_activity (user_id, date, status, updated_at)

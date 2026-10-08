@@ -92,14 +92,18 @@ async function init() {
         `;
       }
     }
+    // Explicit ids above don't advance the serial counter; resync it or the
+    // next "Add member" collides with id 1.
+    await sql`SELECT setval('users_id_seq', (SELECT MAX(id) FROM users))`;
     console.log("✅ Seed users added.");
 
     // 7. Seed Shows
     const shows = [
-      { id: "SGT-1903-A", date: "2026-03-19", time: "18:00", location: "Blue Tokai Garden Cafe", manager_id: 4, employee_ids: [1, 2] },
-      { id: "SGT-1903-B", date: "2026-03-19", time: "20:30", location: "The Piano Man Jazz Club", manager_id: 4, employee_ids: [1, 3] },
-      { id: "SGT-2003-A", date: "2026-03-20", time: "19:00", location: "Olive Bistro Courtyard", manager_id: 5, employee_ids: [2, 3] },
-      { id: "SGT-2103-A", date: "2026-03-21", time: "21:00", location: "Soro Village Pub", manager_id: 5, employee_ids: [1, 2, 3] }
+      // manager_id must be a manager (Kabir, 3); employee_ids must be singers (1, 2, 5).
+      { id: "SGT-1903-A", date: "2026-03-19", time: "18:00", location: "Blue Tokai Garden Cafe", manager_id: 3, employee_ids: [1, 2] },
+      { id: "SGT-1903-B", date: "2026-03-19", time: "20:30", location: "The Piano Man Jazz Club", manager_id: 3, employee_ids: [1, 5] },
+      { id: "SGT-2003-A", date: "2026-03-20", time: "19:00", location: "Olive Bistro Courtyard", manager_id: 3, employee_ids: [2, 5] },
+      { id: "SGT-2103-A", date: "2026-03-21", time: "21:00", location: "Soro Village Pub", manager_id: 3, employee_ids: [1, 2, 5] }
     ];
 
     for (const s of shows) {

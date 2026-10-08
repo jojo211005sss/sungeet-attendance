@@ -531,7 +531,7 @@ function AdminView({ token, user }) {
                 {user.role === "admin" && u.id !== user.id && (
                   <button
                     onClick={() => deleteUser(u.id, u.name)}
-                    className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-400 opacity-0 transition-opacity hover:bg-rose-500/20 group-hover:opacity-100"
+                    className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-400 transition-opacity hover:bg-rose-500/20 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"
                     title="Delete user"
                   >
                     <Trash size={16} />
@@ -568,7 +568,7 @@ function AdminView({ token, user }) {
                 <div className="flex gap-2">
                   <button 
                     onClick={() => setSelectedShow(show)}
-                    className="grid size-8 place-items-center rounded-lg bg-white/[0.04] text-slate-400 opacity-0 transition-opacity hover:bg-white/[0.08] group-hover:opacity-100"
+                    className="grid size-8 place-items-center rounded-lg bg-white/[0.04] text-slate-400 transition-opacity hover:bg-white/[0.08] [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"
                     title="Edit show"
                   >
                     <PencilSimple size={16} />
@@ -576,7 +576,7 @@ function AdminView({ token, user }) {
                   {user.role === "admin" && (
                     <button
                       onClick={() => deleteShow(show.id, show.location)}
-                      className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-400 opacity-0 transition-opacity hover:bg-rose-500/20 group-hover:opacity-100"
+                      className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-400 transition-opacity hover:bg-rose-500/20 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"
                       title="Delete show"
                     >
                       <Trash size={16} />
@@ -1145,7 +1145,7 @@ function MemberForm({ token, onCreated, currentUser }) {
 
 function ShowForm({ token, managers, employees, onCreated }) {
   const [form, setForm] = useState({
-    date: "2026-03-22",
+    date: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()),
     time: "19:30",
     location: "",
     manager_id: managers[0]?.id || "",
@@ -1358,7 +1358,7 @@ function StatsGrid({ stats, role }) {
 
 function EmployeeShows({ shows, token, onChanged }) {
   const [selectedShow, setSelectedShow] = useState(null);
-  const [selectedMonth, setSelectedMonth] = useState(() => shows[0]?.date.slice(0, 7) || "");
+  const [selectedMonth, setSelectedMonth] = useState(() => defaultMonth(shows));
   
   const filteredShows = useMemo(() => 
     selectedMonth ? shows.filter(s => s.date.startsWith(selectedMonth)) : shows
@@ -1378,7 +1378,12 @@ function EmployeeShows({ shows, token, onChanged }) {
               <h2 className="section-title">{formatDate(date)}</h2>
               <div className="mt-3 grid gap-3 xl:grid-cols-2">
                 {dateShows.map((show) => (
-                  <ShowCard key={show.id} show={show} onClick={() => setSelectedShow(show)} />
+                  <ShowCard
+                    key={show.id}
+                    show={show}
+                    // Already marked (the API only sends this singer's own entry)
+                    onClick={show.attendance.length ? undefined : () => setSelectedShow(show)}
+                  />
                 ))}
               </div>
             </div>
@@ -1392,7 +1397,7 @@ function EmployeeShows({ shows, token, onChanged }) {
           onClose={() => setSelectedShow(null)}
           onDone={() => {
             setSelectedShow(null);
-            onChanged();
+            onChanged(true);
           }}
         />
       )}
@@ -1401,7 +1406,7 @@ function EmployeeShows({ shows, token, onChanged }) {
 }
 
 function ManagerShows({ shows, token, role, onChanged, expanded = false }) {
-  const [selectedMonth, setSelectedMonth] = useState(() => shows[0]?.date.slice(0, 7) || "");
+  const [selectedMonth, setSelectedMonth] = useState(() => defaultMonth(shows));
   const [showCloneModal, setShowCloneModal] = useState(false);
   
   const filteredShows = useMemo(() => 
@@ -1448,7 +1453,7 @@ function ManagerShows({ shows, token, role, onChanged, expanded = false }) {
             ))
           )}
         </div>
-        <ApprovalPanel show={activeShow} token={token} onChanged={onChanged} />
+        <ApprovalPanel show={activeShow} token={token} role={role} onChanged={onChanged} />
       </section>
 
       {showCloneModal && (
@@ -1459,7 +1464,7 @@ function ManagerShows({ shows, token, role, onChanged, expanded = false }) {
           onClose={() => setShowCloneModal(false)}
           onDone={(newMonth) => {
             setShowCloneModal(false);
-            onChanged(); // Refresh global data
+            onChanged(true); // Silent refresh: a full one remounts this view and resets the month
             setSelectedMonth(newMonth); // Switch to the new month
           }}
         />
@@ -1499,8 +1504,23 @@ function Meta({ icon, label }) {
   );
 }
 
-function ApprovalPanel({ show, token, onChanged }) {
+const DECISIONS = {
+  approved: { label: "Approve", Icon: Check, tone: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" },
+  rejected: { label: "Reject", Icon: X, tone: "border-rose-400/30 bg-rose-500/10 text-rose-200" }
+};
+
+function ApprovalPanel({ show, token, role, onChanged }) {
   const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+  // Pending: approve or reject. Finalized: only admins/superiors may flip it.
+  const decisionsFor = (entry) => {
+    if (!entry) return [];
+    if (entry.approval_status === "pending") return ["approved", "rejected"];
+    if (role === "admin" || role === "superior") {
+      return [entry.approval_status === "approved" ? "rejected" : "approved"];
+    }
+    return [];
+  };
   const rows = useMemo(() => {
     if (!show) return [];
     return show.employees.map((employee) => ({
@@ -1517,7 +1537,10 @@ function ApprovalPanel({ show, token, onChanged }) {
         method: "PATCH",
         body: { approval_status }
       });
-      onChanged();
+      setError("");
+      onChanged(true);
+    } catch (requestError) {
+      setError(requestError.message);
     } finally {
       setBusyId(null);
     }
@@ -1534,6 +1557,7 @@ function ApprovalPanel({ show, token, onChanged }) {
         <p className="section-copy">
           {formatDate(show.date)} at {formatTime(show.time)}
         </p>
+        {error && <FormFeedback error={error} />}
       </div>
       <div className="space-y-3 md:hidden">
         {rows.map((row) => (
@@ -1555,24 +1579,22 @@ function ApprovalPanel({ show, token, onChanged }) {
                 <StatusBadge status={row.attendance?.approval_status || "waiting"} />
               </div>
             </div>
-            {row.attendance?.approval_status === "pending" ? (
+            {decisionsFor(row.attendance).length ? (
               <div className="mt-4 grid grid-cols-2 gap-3">
-                <button
-                  className="decision-button-mobile border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                  disabled={busyId === row.attendance.id}
-                  onClick={() => review(row.attendance, "approved")}
-                >
-                  <Check size={19} />
-                  Approve
-                </button>
-                <button
-                  className="decision-button-mobile border-rose-400/30 bg-rose-500/10 text-rose-200"
-                  disabled={busyId === row.attendance.id}
-                  onClick={() => review(row.attendance, "rejected")}
-                >
-                  <X size={19} />
-                  Reject
-                </button>
+                {decisionsFor(row.attendance).map((decision) => {
+                  const { label, Icon, tone } = DECISIONS[decision];
+                  return (
+                    <button
+                      key={decision}
+                      className={`decision-button-mobile ${tone}`}
+                      disabled={busyId === row.attendance.id}
+                      onClick={() => review(row.attendance, decision)}
+                    >
+                      <Icon size={19} />
+                      {row.attendance.approval_status === "pending" ? label : `Change to ${decision}`}
+                    </button>
+                  );
+                })}
               </div>
             ) : (
               <p className="mt-4 text-sm text-slate-500">No action needed</p>
@@ -1601,24 +1623,24 @@ function ApprovalPanel({ show, token, onChanged }) {
                   <StatusBadge status={row.attendance?.approval_status || "waiting"} />
                 </td>
                 <td className="py-4">
-                  {row.attendance?.approval_status === "pending" ? (
+                  {decisionsFor(row.attendance).length ? (
                     <div className="flex gap-2">
-                      <button
-                        className="decision-button border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                        disabled={busyId === row.attendance.id}
-                        onClick={() => review(row.attendance, "approved")}
-                        title="Approve"
-                      >
-                        <Check size={18} />
-                      </button>
-                      <button
-                        className="decision-button border-rose-400/30 bg-rose-500/10 text-rose-200"
-                        disabled={busyId === row.attendance.id}
-                        onClick={() => review(row.attendance, "rejected")}
-                        title="Reject"
-                      >
-                        <X size={18} />
-                      </button>
+                      {decisionsFor(row.attendance).map((decision) => {
+                        const { label, Icon, tone } = DECISIONS[decision];
+                        const title = row.attendance.approval_status === "pending" ? label : `Change to ${decision}`;
+                        return (
+                          <button
+                            key={decision}
+                            className={`decision-button ${tone}`}
+                            disabled={busyId === row.attendance.id}
+                            onClick={() => review(row.attendance, decision)}
+                            title={title}
+                            aria-label={title}
+                          >
+                            <Icon size={18} />
+                          </button>
+                        );
+                      })}
                     </div>
                   ) : (
                     <span className="text-sm text-slate-500">No action</span>
@@ -1658,8 +1680,10 @@ function CopyScheduleModal({ shows, sourceMonth, token, onClose, onDone }) {
         const show = shows[i];
         setProgress({ current: i + 1, total: shows.length });
         
-        // Calculate new date: same day of month
-        const day = show.date.slice(8, 10);
+        // Same day of month, clamped so 31 Oct -> 30 Nov instead of an invalid date
+        const [targetYear, targetMon] = targetMonth.split("-").map(Number);
+        const lastDay = new Date(targetYear, targetMon, 0).getDate();
+        const day = String(Math.min(Number(show.date.slice(8, 10)), lastDay)).padStart(2, "0");
         const newDate = `${targetMonth}-${day}`;
         
         await api("/shows", {
@@ -1823,6 +1847,14 @@ function StatusBadge({ status }) {
       {status}
     </span>
   );
+}
+
+// This month if it has shows, otherwise the latest month (shows arrive oldest-first).
+function defaultMonth(shows) {
+  const now = new Date();
+  const current = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  if (shows.some((s) => s.date.startsWith(current))) return current;
+  return shows.at(-1)?.date.slice(0, 7) || "";
 }
 
 function MonthFilter({ shows, selectedMonth, onSelect }) {
@@ -2390,7 +2422,7 @@ function WebsiteFloaters({ token }) {
               <div className="floater-thumb">
                 {f.image_id || f.image_url ? (
                   <img
-                    src={f.image_id ? `${MEDIA_BASE}/api/media/${f.image_id}` : f.image_url}
+                    src={resolveMedia(f.image_id, f.image_url)}
                     alt=""
                   />
                 ) : (
@@ -2494,7 +2526,7 @@ function FloaterEditor({ token, floater, nextSort, onClose, onSaved }) {
         token={token}
         kind="audio"
         label="Clip"
-        hint="10-15 seconds is ideal. Plays when someone taps them."
+        hint="10-15 seconds is ideal (MP3 or M4A, up to 3MB). Plays when someone taps them."
         value={form.audio_id}
         url={form.audio_url}
         onChange={({ id, url }) => setForm((p) => ({ ...p, audio_id: id, audio_url: url }))}
@@ -2544,6 +2576,7 @@ function FloaterEditor({ token, floater, nextSort, onClose, onSaved }) {
    ========================================================================== */
 
 const MEDIA_BASE = API_URL.replace(/\/api$/, "");
+const PUBLIC_SITE_URL = import.meta.env.VITE_PUBLIC_SITE_URL || "https://sungeet-main.vercel.app";
 
 /**
  * Where to load a stored asset from while editing.
@@ -2557,7 +2590,10 @@ function resolveMedia(id, url) {
   if (id) return `${MEDIA_BASE}/api/media/${id}`;
   if (!url) return "";
   const match = /^\/api\/media\?id=([0-9a-f-]{36})$/i.exec(url);
-  return match ? `${MEDIA_BASE}/api/media/${match[1]}` : url;
+  if (match) return `${MEDIA_BASE}/api/media/${match[1]}`;
+  // A root path like "/singers/aditya.webp" is a file in the public site's
+  // /public folder, which this app doesn't have.
+  return url.startsWith("/") ? `${PUBLIC_SITE_URL}${url}` : url;
 }
 
 /** The canonical path the public site will fetch an upload from. */
@@ -2588,6 +2624,16 @@ async function compressImage(file, maxEdge = 1000) {
   return new File([blob], file.name.replace(/\.\w+$/, "") + ".webp", { type: "image/webp" });
 }
 
+// Must match MEDIA_MAX_BYTES on the server (Vercel's 4.5MB body cap, after base64).
+const MEDIA_MAX_MB = 3;
+const MEDIA_ACCEPT = {
+  image: "image/png,image/jpeg,image/webp,image/gif",
+  audio: "audio/mpeg,audio/mp4,audio/x-m4a,audio/aac,audio/wav,audio/x-wav,audio/ogg,.mp3,.m4a,.aac,.wav,.ogg"
+};
+// Some browsers leave file.type empty for .m4a/.aac; the server needs a type.
+const EXT_MIME = { mp3: "audio/mpeg", m4a: "audio/x-m4a", aac: "audio/aac", wav: "audio/wav", ogg: "audio/ogg" };
+const mimeOf = (file) => file.type || EXT_MIME[file.name.split(".").pop().toLowerCase()] || "";
+
 const fileToBase64 = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2615,12 +2661,18 @@ function MediaUpload({ token, kind, value, url, onChange, label, hint }) {
     setBusy(true);
     try {
       const prepared = kind === "image" ? await compressImage(file) : file;
+      if (prepared.size > MEDIA_MAX_MB * 1024 * 1024) {
+        throw new Error(
+          `That file is ${(prepared.size / 1024 / 1024).toFixed(1)}MB; the limit is ${MEDIA_MAX_MB}MB.` +
+            (kind === "audio" ? " Trim the clip or export it as MP3." : "")
+        );
+      }
       const data = await fileToBase64(prepared);
       const result = await api("/website/media", {
         token,
         method: "POST",
         timeout: 45000,
-        body: { kind, mime: prepared.type, filename: prepared.name, data }
+        body: { kind, mime: mimeOf(prepared), filename: prepared.name, data }
       });
       onChange({ id: result.id, url: publicMediaUrl(result.id) });
     } catch (err) {
@@ -2664,7 +2716,7 @@ function MediaUpload({ token, kind, value, url, onChange, label, hint }) {
           <input
             ref={inputRef}
             type="file"
-            accept={kind === "image" ? "image/*" : "audio/*"}
+            accept={MEDIA_ACCEPT[kind]}
             onChange={handleFile}
             hidden
           />
