@@ -285,7 +285,7 @@ function LoginScreen({ onLogin }) {
         <div className="mb-7 flex flex-col items-center text-center">
           <span className="brand-mark !h-11 !w-11 !rounded-xl"><Logo size={22} /></span>
           <h1 className="mt-4 text-[1.375rem] font-semibold tracking-tight">Sign in to SUNGGEET</h1>
-          <p className="mt-1 muted">Shows, attendance and pay for the team.</p>
+          <p className="mt-1 muted">Shows and attendance for the team.</p>
         </div>
 
         <form onSubmit={submit} className="card card-pad space-y-4">
@@ -593,7 +593,6 @@ function SingerHome({ user, navigate }) {
   const upcoming = shows.filter((s) => !hasStarted(s)).slice(0, 5);
   const awaiting = shows.filter((s) => s.attendance[0]?.approval_status === "pending").length;
   const approved = monthShows.filter((s) => s.attendance[0]?.approval_status === "approved");
-  const earned = approved.reduce((sum, s) => sum + (Number(myPay(s, user)) || 0), 0);
   const openShow = shows.find((s) => s.id === openId);
 
   return (
@@ -621,9 +620,9 @@ function SingerHome({ user, navigate }) {
 
       <div className="kpis">
         <Kpi label="Shows this month" value={monthShows.length} foot={monthLabel(month)} />
-        <Kpi label="Approved this month" value={approved.length} foot="Counted for pay" />
+        <Kpi label="Approved this month" value={approved.length} foot="Confirmed by manager" />
         <Kpi label="Awaiting approval" value={awaiting} foot="Manager to confirm" />
-        <Kpi label="Earned this month" value={inr(earned)} foot="Approved shows only" />
+        <Kpi label="Upcoming" value={upcoming.length} foot="Shows ahead" />
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[1.35fr_1fr] lg:gap-6">
@@ -637,7 +636,7 @@ function SingerHome({ user, navigate }) {
           {upcoming.length === 0 ? (
             <Empty icon={CalendarBlank} title="No upcoming shows" copy="Shows you're assigned to will appear here." />
           ) : (
-            upcoming.map((show) => <AgendaRow key={show.id} show={show} onClick={() => setOpenId(show.id)} pay={myPay(show, user)} />)
+            upcoming.map((show) => <AgendaRow key={show.id} show={show} onClick={() => setOpenId(show.id)} />)
           )}
         </section>
         <CheckInCard />
@@ -679,7 +678,7 @@ function ReviewRow({ show, entry, onOpen }) {
   );
 }
 
-function AgendaRow({ show, onClick, pay }) {
+function AgendaRow({ show, onClick }) {
   return (
     <button className="row" onClick={onClick}>
       <DateTile date={show.date} />
@@ -689,7 +688,6 @@ function AgendaRow({ show, onClick, pay }) {
           {dayLabel(show.date)} · {formatTime(show.time)} · {plural(show.employees.length, "singer")}
         </p>
       </div>
-      {pay != null && <span className="text-[13px] font-medium muted">{inr(pay)}</span>}
       <CaretRight size={16} className="subtle" />
     </button>
   );
@@ -976,7 +974,7 @@ function ShowRow({ show, user, onClick }) {
           <span className="row-sub !mt-0">
             {isStaff(user)
               ? `${show.manager?.name || "No manager"} · ${plural(show.employees.length, "singer")}`
-              : `${show.manager?.name || "No manager"}${myPay(show, user) != null ? ` · ${inr(myPay(show, user))}` : ""}`}
+              : show.manager?.name || "No manager"}
           </span>
         </div>
       </div>
@@ -1068,7 +1066,6 @@ function ShowSheet({ show, user, onClose }) {
           </>
         ) : (
           <>
-            <Detail label="Your pay" value={myPay(show, user) != null ? inr(myPay(show, user)) : "Not set"} />
             <Detail label="Status" value={<Pill tone={sState.tone}>{sState.label}</Pill>} />
           </>
         )}
@@ -1104,7 +1101,7 @@ function ShowSheet({ show, user, onClose }) {
               {singerEntry.approval_status === "pending" ? "Your manager hasn't reviewed it yet." : `It was ${singerEntry.approval_status}.`}
             </p>
           ) : sState.canMark ? (
-            <p className="alert tone-brand">Did you perform? Mark it so your manager can approve it for pay.</p>
+            <p className="alert tone-brand">Did you perform? Mark it so your manager can approve it.</p>
           ) : (
             <p className="alert tone-info">You can mark attendance once the show starts at {formatTime(show.time)}.</p>
           )}
@@ -2753,10 +2750,6 @@ const hasStarted = (show) => showStart(show) <= new Date();
 /* For a singer the API only returns their own attendance entry. */
 const readyToMark = (show) => hasStarted(show) && show.attendance.length === 0;
 
-const myPay = (show, user) => {
-  const value = show.employee_pay?.[String(user.id)] ?? show.employees.find((e) => e.id === user.id)?.pay;
-  return value == null || value === "" ? null : Number(value);
-};
 
 /** Every attendance entry still waiting on a decision, newest show first. */
 function pendingEntries(shows) {

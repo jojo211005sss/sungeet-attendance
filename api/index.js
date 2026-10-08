@@ -924,16 +924,19 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
     return res.status(500).json({ message: "Failed to create show" });
   }
 });
-// Singers only see their own attendance and pay, not their colleagues'.
+const canSeePay = (user) => user.role === "admin" || user.role === "superior";
+
+// Pay is admin-only: managers and singers never receive it. Singers also only
+// see their own attendance, not their colleagues'.
 const forViewer = (user, show) => {
-  if (user.role !== "employee") return show;
-  const own = String(user.id);
-  const pay = show.employee_pay || {};
+  if (canSeePay(user)) return show;
   return {
     ...show,
-    employee_pay: own in pay ? { [own]: pay[own] } : {},
-    employees: show.employees.map((e) => (e.id === user.id ? e : { ...e, pay: null })),
-    attendance: show.attendance.filter((entry) => entry.user_id === user.id)
+    employee_pay: {},
+    employees: show.employees.map((e) => ({ ...e, pay: null })),
+    attendance: user.role === "employee"
+      ? show.attendance.filter((entry) => entry.user_id === user.id)
+      : show.attendance
   };
 };
 
@@ -1086,7 +1089,7 @@ app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "ad
     RETURNING *
   `;
 
-  return res.json({ attendance: updatedEntry, show: await decorateShow(show) });
+  return res.json({ attendance: updatedEntry, show: forViewer(req.user, await decorateShow(show)) });
 });
 
 app.get("/api/profile", authenticate, async (req, res) => {
@@ -1101,14 +1104,11 @@ app.get("/api/profile", authenticate, async (req, res) => {
       getStats(req.user)
     ]);
 
-    const own = String(req.user.id);
     const allShows = allShowsRaw.map(s => ({
       ...s,
       date: s.date instanceof Date ? s.date.toISOString().split("T")[0] : s.date,
-      // Singers only see their own pay.
-      ...(req.user.role === "employee" && {
-        employee_pay: own in (s.employee_pay || {}) ? { [own]: s.employee_pay[own] } : {}
-      })
+      // Pay is admin-only.
+      ...(!canSeePay(req.user) && { employee_pay: {} })
     }));
 
     const filteredAttendance = allAttendance.filter((entry) => {
