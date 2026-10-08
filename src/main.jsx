@@ -32,7 +32,6 @@ import {
   X
 } from "@phosphor-icons/react";
 import "@fontsource-variable/geist";
-import "@fontsource-variable/geist-mono";
 import "./styles.css";
 
 const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? `http://${window.location.hostname}:4000/api` : "/api");
@@ -47,16 +46,21 @@ const isStaff = (user) => user?.role !== "employee";
 
 const DataContext = createContext();
 
-function DataProvider({ children, token, user }) {
-  const [state, setState] = useState({
-    shows: [],
-    profile: null,
-    users: [],
-    activity: { status: null, summary: null },
-    loading: true,
-    initialLoadDone: false,
-    error: ""
+function DataProvider({ children, token, user, onUnauthorized }) {
+  // Paint the last snapshot straight away, then refresh it in the background.
+  const [state, setState] = useState(() => {
+    const cached = readCache(user, "workspace");
+    return {
+      shows: cached?.shows || [],
+      profile: cached?.profile || null,
+      users: cached?.users || [],
+      activity: cached?.activity || { status: null, summary: null },
+      loading: !cached,
+      initialLoadDone: !!cached,
+      error: ""
+    };
   });
+  const lastFetch = useRef(0);
 
   const removeUser = useCallback((id) => {
     setState((s) => ({ ...s, users: s.users.filter((u) => u.id !== id) }));
@@ -80,25 +84,46 @@ function DataProvider({ children, token, user }) {
       if (admin) endpoints.push(api("/users", { token }));
 
       const results = await Promise.all(endpoints);
+      lastFetch.current = Date.now();
 
-      setState({
+      const data = {
         shows: results[0].shows,
         profile: results[1],
         activity: { status: results[2].status, summary: results[2].summary },
-        users: admin ? results[3].users : [],
-        loading: false,
-        initialLoadDone: true,
-        error: ""
-      });
+        users: admin ? results[3].users : []
+      };
+      writeCache(user, "workspace", data);
+      setState({ ...data, loading: false, initialLoadDone: true, error: "" });
     } catch (err) {
+      if (err.status === 401) return onUnauthorized();
       console.error("Data refresh error:", err);
       setState((s) => ({ ...s, loading: false, error: err.message || "Could not load data" }));
     }
-  }, [token, user]);
+  }, [token, user, onUnauthorized]);
 
   useEffect(() => {
-    if (token && user) refresh();
+    if (token && user) refresh(true);
   }, [token, user, refresh]);
+
+  // Coming back to the app after a while: quietly pull fresh data.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && Date.now() - lastFetch.current > 30000) refresh(true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refresh]);
+
+  // Once the workspace is up, warm the Website tab in the background so it
+  // opens instantly (and its database wakes up before anyone needs it).
+  useEffect(() => {
+    if (!state.initialLoadDone || !isAdmin(user)) return;
+    const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 1500));
+    idle(() => {
+      api("/website/data", { token, timeout: 25000 }).then((d) => writeCache(user, "website", d)).catch(() => {});
+      api("/website/floaters", { token, timeout: 25000 }).then((d) => writeCache(user, "floaters", d.floaters || [])).catch(() => {});
+    });
+  }, [state.initialLoadDone, token, user]);
 
   const value = useMemo(() => ({ ...state, refresh, removeUser, removeShow, token, user }), [state, refresh, removeUser, removeShow, token, user]);
 
@@ -187,6 +212,14 @@ function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
+  const logout = useCallback(() => {
+    clearCache();
+    localStorage.removeItem("sunggeet-token");
+    localStorage.removeItem("sunggeet-user");
+    setToken("");
+    setUser(null);
+  }, []);
+
   if (!token || !user) {
     return (
       <LoginScreen
@@ -201,16 +234,8 @@ function App() {
   }
 
   return (
-    <DataProvider token={token} user={user}>
-      <AuthenticatedApp
-        user={user}
-        onLogout={() => {
-          localStorage.removeItem("sunggeet-token");
-          localStorage.removeItem("sunggeet-user");
-          setToken("");
-          setUser(null);
-        }}
-      />
+    <DataProvider token={token} user={user} onUnauthorized={logout}>
+      <AuthenticatedApp user={user} onLogout={logout} />
     </DataProvider>
   );
 }
@@ -1878,17 +1903,19 @@ const EVENT_TYPES = [
 ];
 
 function WebsitePage() {
-  const { token } = useData();
+  const { token, user } = useData();
   const [tab, setTab] = useState("calendar");
-  const [shows, setShows] = useState([]);
-  const [teams, setTeams] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const cached = useMemo(() => readCache(user, "website"), [user]);
+  const [shows, setShows] = useState(cached?.shows || []);
+  const [teams, setTeams] = useState(cached?.teams || []);
+  const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     setError("");
     try {
       const data = await api("/website/data", { token, timeout: 25000 });
+      writeCache(user, "website", data);
       setShows(data.shows);
       setTeams(data.teams);
     } catch (err) {
@@ -1896,7 +1923,7 @@ function WebsitePage() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, user]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -2205,15 +2232,17 @@ function TeamSheet({ team, onClose, onSaved }) {
    -------------------------------------------------------------------------- */
 
 function WebsiteFloaters() {
-  const { token } = useData();
-  const [floaters, setFloaters] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { token, user } = useData();
+  const cached = useMemo(() => readCache(user, "floaters"), [user]);
+  const [floaters, setFloaters] = useState(cached || []);
+  const [loading, setLoading] = useState(!cached);
   const [editing, setEditing] = useState(null); // floater | "new"
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
       const data = await api("/website/floaters", { token, timeout: 25000 });
+      writeCache(user, "floaters", data.floaters || []);
       setFloaters(data.floaters || []);
       setError("");
     } catch (err) {
@@ -2221,7 +2250,7 @@ function WebsiteFloaters() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, user]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -2831,6 +2860,35 @@ function formatTime(time) {
 const inr = (amount) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(amount) || 0);
 
+/* Last-seen data, per user, so screens paint instantly on the next visit.
+   Bump the version when the shape of cached data changes. Cleared on logout. */
+const CACHE_PREFIX = "sunggeet-cache:v1:";
+const cacheKey = (user, name) => `${CACHE_PREFIX}${user.id}:${name}`;
+
+function readCache(user, name) {
+  try {
+    return JSON.parse(localStorage.getItem(cacheKey(user, name)));
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(user, name, value) {
+  try {
+    localStorage.setItem(cacheKey(user, name), JSON.stringify(value));
+  } catch {
+    // Storage full or blocked (private mode): the app still works, just uncached.
+  }
+}
+
+function clearCache() {
+  try {
+    Object.keys(localStorage).filter((k) => k.startsWith(CACHE_PREFIX)).forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // Nothing to clear.
+  }
+}
+
 async function api(path, options = {}) {
   const controller = new AbortController();
   // 8s suits the warm endpoints. Anything touching the website database needs
@@ -2852,8 +2910,8 @@ async function api(path, options = {}) {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: "Request failed" }));
-      throw new Error(error.message || "Request failed");
+      const body = await response.json().catch(() => ({ message: "Request failed" }));
+      throw Object.assign(new Error(body.message || "Request failed"), { status: response.status });
     }
 
     return response.json();

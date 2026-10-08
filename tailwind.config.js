@@ -4,8 +4,7 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Geist Variable", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["Geist Mono Variable", "ui-monospace", "SFMono-Regular", "monospace"]
+        sans: ["Geist Variable", "ui-sans-serif", "system-ui", "sans-serif"]
       },
       colors: {
         canvas: "var(--canvas)",
