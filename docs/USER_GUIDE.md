@@ -342,6 +342,17 @@ On a laptop, the views become full tables:
 
 <p><img src="images/72-desktop-reports.webp" width="720" alt="Reports on a laptop"></p>
 
+#### Sample data (for demos)
+
+<p><img src="images/58-sample-data.webp" width="300" alt="Sample data card"></p>
+
+At the bottom of **Reports**, the **Sample data** card loads about two years of realistic sample shows, people, venues and pay, so you can show off Reports and comparisons. It also publishes the upcoming sample gigs on the public website.
+
+- **Load sample data** adds it. Sample people end in `.demo@sunggeet.com` and can't sign in.
+- **Remove sample data** deletes all of it, including the website listings. Your real shows, people and pay are never touched.
+
+> Sample pay is counted in every Reports number while it's loaded. **Remove it before using Reports for real payroll.**
+
 #### Export to Excel
 
 On **Reports**, tap **Export Excel**. You get a spreadsheet of every show, singer, attendance decision and pay, ready for payroll.

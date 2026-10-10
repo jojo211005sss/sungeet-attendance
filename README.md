@@ -53,4 +53,6 @@ The live database holds sample data so Reports and comparisons have something to
 node scripts/demo-data.js remove
 ```
 
+On the live site, use **Reports > Sample data** instead (production has its own database, which the script can't reach).
+
 Run `node scripts/demo-data.js` to add it again. Demo people have usernames ending in `.demo@sunggeet.com` and random passwords (they can't sign in); demo show IDs start with `DEMO-`; each demo show is also published on the website, so upcoming ones appear on the public calendar (removing the demo data takes them down too).
