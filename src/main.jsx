@@ -1957,6 +1957,12 @@ function ReportsPage() {
   const [compare, setCompare] = useState("none"); // none | prev | lastyear
   const [view, setView] = useState("overview");
   const [open, setOpen] = useState(null); // { dim, key }
+  const [demo, setDemo] = useState(null);
+  const { token } = useData();
+
+  useEffect(() => {
+    api("/demo-data", { token }).then(setDemo).catch(() => setDemo({ present: false, shows: 0, people: 0 }));
+  }, [token]);
 
   if (!initialLoadDone) return error ? <LoadError /> : <PageSkeleton />;
 
@@ -1978,6 +1984,8 @@ function ReportsPage() {
   return (
     <>
       <PageHead title="Reports" sub="Shows, attendance and pay by venue, team, singer or manager." actions={<ExportButton />} />
+
+      {demo && !demo.present && <SampleDataCard status={demo} onChange={setDemo} />}
 
       <section className="card card-pad mb-4 space-y-3 lg:mb-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2017,7 +2025,7 @@ function ReportsPage() {
         <ReportBreakdown model={model} dimId={view} period={period} cmpPeriod={cmpPeriod} onOpen={(key) => setOpen({ dim: view, key })} />
       )}
 
-      <SampleDataCard />
+      {demo?.present && <SampleDataCard status={demo} onChange={setDemo} />}
 
       {open && (
         <ReportEntitySheet model={model} dimId={open.dim} entityKey={open.key} period={period} onClose={() => setOpen(null)} />
@@ -2027,15 +2035,10 @@ function ReportsPage() {
 }
 
 /* Load or clear the demo dataset (lib/demo-data.js) so Reports has something to show. */
-function SampleDataCard() {
+function SampleDataCard({ status, onChange: setStatus }) {
   const { token, refresh } = useData();
   const { toast, confirm } = useUI();
-  const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    api("/demo-data", { token }).then(setStatus).catch(() => {});
-  }, [token]);
 
   const run = async (action) => {
     const ok = await confirm(
@@ -2066,16 +2069,15 @@ function SampleDataCard() {
     }
   };
 
-  if (!status) return null;
   return (
-    <section className="card card-pad mt-6">
+    <section className={`card card-pad ${status.present ? "mt-6" : "mb-4 !border-[#ecd2b7] bg-brand-soft lg:mb-6"}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h2 className="card-title">Sample data</h2>
           <p className="mt-0.5 text-[13px] muted">
             {status.present
               ? `${plural(status.shows, "sample show")} and ${plural(status.people, "sample person", "sample people")} are loaded. They're included in every number above.`
-              : "Load a realistic set of shows, people and pay to try Reports and comparisons."}
+              : "Load about two years of realistic sample shows, people and pay to try Reports and the comparisons. Remove it any time."}
           </p>
         </div>
         {status.present ? (
@@ -2083,7 +2085,7 @@ function SampleDataCard() {
             <Trash size={16} /> {busy ? "Removing…" : "Remove sample data"}
           </button>
         ) : (
-          <button className="btn btn-secondary" onClick={() => run("add")} disabled={busy}>
+          <button className="btn btn-primary" onClick={() => run("add")} disabled={busy}>
             <Plus size={16} /> {busy ? "Loading…" : "Load sample data"}
           </button>
         )}
@@ -2664,7 +2666,9 @@ const periodLabel = (period) => (period.kind === "month" ? monthLabel(period.val
 
 /* The 12 months a chart shows: the chosen year, or the year up to the chosen month. */
 function chartMonths(period, dataMonths) {
-  const end = period.kind === "month" ? period.value : period.kind === "year" ? `${period.value}-12` : dataMonths.at(-1);
+  // All time: the 12 months up to now (a mistyped far-future show shouldn't stretch it).
+  const current = todayIST().slice(0, 7);
+  const end = period.kind === "month" ? period.value : period.kind === "year" ? `${period.value}-12` : dataMonths.filter((m) => m <= current).at(-1) || current;
   return Array.from({ length: 12 }, (_, i) => shiftMonth(end, i - 11));
 }
 
