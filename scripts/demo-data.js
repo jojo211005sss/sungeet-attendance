@@ -13,7 +13,7 @@ import bcrypt from "bcryptjs";
 //   shows      id starts with "DEMO-"
 //   people     username ends with ".demo@sunggeet.com" (random passwords, can't sign in)
 //   venues     the names in DEMO_VENUES (only deleted once they have no shows)
-//   website    hidden rows whose source_show_id starts with "DEMO-" (never on the public site)
+//   website    published rows whose source_show_id starts with "DEMO-" (upcoming ones show on the public site)
 
 const sql = neon(process.env.DATABASE_URL);
 const web = process.env.WEBSITE_DATABASE_URL ? neon(process.env.WEBSITE_DATABASE_URL) : null;
@@ -32,6 +32,9 @@ const DEMO_VENUES = [
   ["Banyan Tree Bistro", 1, 4500]
 ];
 const TIMES = ["19:00", "19:30", "20:00", "20:30", "21:00"];
+const SET_NAMES = ["Bollywood unplugged", "Sufi night", "Retro evening", "Ghazals & chai", "Acoustic covers", "Qawwali under the stars", "Old Hindi classics"];
+const NOTES = ["Two sets, no cover.", "Table reservations recommended.", "Free entry.", "Requests welcome.", null];
+const EVENT_TYPES = [["cafe", 7], ["private", 2], ["community", 1]];
 const FIRST_MONTH = "2025-01";
 const LAST_MONTH = "2026-11";
 
@@ -113,7 +116,13 @@ async function add() {
       const pay = Object.fromEntries(lineup.map((s) => [String(s.id), venue.pay + Math.round(rand() * 3) * 500]));
       const id = `DEMO-${date.replaceAll("-", "")}-${String(i + 1).padStart(2, "0")}`;
       const start = new Date(`${date}T${time}:00+05:30`);
-      shows.push({ id, date, time, venue, manager, lineup, pay, start, team: teams.length ? pick(teams).id : null });
+      shows.push({
+        id, date, time, venue, manager, lineup, pay, start,
+        team: teams.length ? pick(teams).id : null,
+        eventType: weighted(EVENT_TYPES)[0],
+        setName: pick(SET_NAMES),
+        note: pick(NOTES)
+      });
 
       if (start > now) return; // hasn't happened yet
       const ageDays = (now - start) / 86400000;
@@ -148,12 +157,14 @@ async function add() {
     `;
   }
 
-  // Which team played: a hidden website row per show (feeds Reports → Teams).
+  // A published website listing per show: upcoming ones appear on the public
+  // calendar, and the team link feeds Reports → Teams.
   if (web && teams.length) {
     for (const s of shows) {
       await web`
-        INSERT INTO shows (starts_at, venue, city, event_type, team_id, is_published, source_show_id)
-        VALUES (${s.start.toISOString()}, ${s.venue.name}, 'New Delhi', 'cafe', ${s.team}, false, ${s.id})
+        INSERT INTO shows (starts_at, venue, city, event_type, team_id, set_name, note, is_published, source_show_id)
+        VALUES (${s.start.toISOString()}, ${s.venue.name}, 'New Delhi', ${s.eventType}, ${s.team},
+                ${s.setName}, ${s.note}, true, ${s.id})
       `;
     }
   }

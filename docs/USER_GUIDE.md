@@ -366,6 +366,10 @@ This controls the public SUNGGEET website. **Changes go live immediately.**
    - **Visible on the website:** turn it off to hide the show but keep its details.
 3. Tap **Save**.
 
+On the public site, published gigs light up on the calendar. Visitors tap a day to see the venue, time, set and the team playing:
+
+<p><img src="images/64-public-calendar.webp" width="300" alt="A published gig on the public website"></p>
+
 The date, time and performers come from the show itself. Change those in **Shows**, not here. **Remove** (bottom left) takes the show off the website but keeps the show.
 
 #### Teams
