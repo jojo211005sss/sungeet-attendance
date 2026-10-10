@@ -44,6 +44,55 @@ const requireWebsiteDb = (_req, res, next) => {
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// The live database can be older than the code (it is a different database
+// from the local one). Bring its schema up to date once per server start so a
+// deploy never depends on someone running a migration by hand. Every statement
+// only adds and is safe to repeat; same steps as scripts/add-venues.js.
+let schemaReady;
+const ensureSchema = () =>
+  (schemaReady ??= (async () => {
+    await sql`ALTER TABLE shows ADD COLUMN IF NOT EXISTS employee_pay JSONB DEFAULT '{}'::jsonb`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS venues (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS venues_name_key ON venues (lower(name))`;
+    await sql`ALTER TABLE shows ADD COLUMN IF NOT EXISTS venue_id INTEGER REFERENCES venues(id)`;
+    // Link any show still without a venue (older rows, or shows from before this).
+    await sql`
+      INSERT INTO venues (name)
+      SELECT DISTINCT ON (lower(clean)) clean
+      FROM (
+        SELECT regexp_replace(trim(location), '\\s+', ' ', 'g') AS clean, COUNT(*) AS uses
+        FROM shows WHERE venue_id IS NULL AND trim(coalesce(location, '')) <> ''
+        GROUP BY 1
+      ) names
+      ORDER BY lower(clean), uses DESC
+      ON CONFLICT ((lower(name))) DO NOTHING
+    `;
+    await sql`
+      UPDATE shows s SET venue_id = v.id, location = v.name
+      FROM venues v
+      WHERE s.venue_id IS NULL
+        AND lower(regexp_replace(trim(s.location), '\\s+', ' ', 'g')) = lower(v.name)
+    `;
+  })().catch((error) => {
+    schemaReady = undefined; // try again on the next request
+    throw error;
+  }));
+
+app.use(async (_req, _res, next) => {
+  try {
+    await ensureSchema();
+  } catch (error) {
+    console.error("Schema check failed:", error);
+  }
+  next();
+});
+
 // No fallback. A default secret that ships in a public repo lets anyone forge
 // an admin token, so refuse to boot without a real one.
 const JWT_SECRET = process.env.JWT_SECRET;
