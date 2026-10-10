@@ -192,8 +192,8 @@ The list is grouped by day (*Today*, *Tomorrow*, *Yesterday*, then dates). Each 
 2. **Venue:** tap the box to see your saved venues (most-used first). Tap one, or type a few letters to filter. A **green tick** means you picked a saved venue.
    - If the venue isn't saved yet, type its full name. It's saved automatically when you create the show.
 3. **Date** and **Start time:** today at 7:30 pm is filled in for you. Change them as needed.
-4. **Manager:** pick who runs the show.
-5. **Singers & pay:** tick each singer. A **₹ Pay** box appears next to each one you tick. Enter what they earn for this show. The total shows top right.
+4. **Manager & pay:** pick who runs the show. You have to choose; nothing is pre-selected. In the **₹ Pay** box next to it, enter the manager's pay for this show. It counts as due once the show has started, because managers don't mark attendance.
+5. **Singers & pay:** tick each singer. A **₹ Pay** box appears next to each one you tick. Enter what they earn for this show. The singers' total shows under the heading, and **Total incl. manager** shows top right.
 6. Tap **Create show**.
 
 #### Edit a show
@@ -290,8 +290,10 @@ What each number means:
 | **Shows** | Shows in the period. |
 | **Spots approved** | Approved singer slots out of the slots for shows that have started. |
 | **Attendance rate** | Approved ÷ slots played. |
-| **Pay due** | Pay for **approved** attendance only. This is what to pay out. |
-| **Pay planned** | Pay for every assigned slot, approved or not. Shown in each item's detail panel. |
+| **Pay due** | What to pay out: singer pay for **approved** attendance, plus manager pay for shows that have **started**. The card splits it into singers and managers. |
+| **Pay planned** | All pay set on the shows, approved or not. Shown in each item's detail panel. |
+
+**Which pay each view counts:** **Venues** and **Teams** count everything owed for their shows (singers and manager). **Singers** count only that singer's pay. **Managers** count only that manager's own pay.
 
 **Monthly trend:** a 12-month chart. Switch between **Pay due**, **Shows** and **Approved**. Tap a month to see its exact numbers. With Compare on, **brass** bars are the period you picked and **blue** bars are the same months a year earlier:
 

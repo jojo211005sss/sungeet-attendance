@@ -53,6 +53,7 @@ let schemaReady;
 const ensureSchema = () =>
   (schemaReady ??= (async () => {
     await sql`ALTER TABLE shows ADD COLUMN IF NOT EXISTS employee_pay JSONB DEFAULT '{}'::jsonb`;
+    await sql`ALTER TABLE shows ADD COLUMN IF NOT EXISTS manager_pay NUMERIC`;
     await sql`
       CREATE TABLE IF NOT EXISTS venues (
         id SERIAL PRIMARY KEY,
@@ -965,6 +966,13 @@ app.get("/api/shows", authenticate, async (req, res) => {
    rewritten whenever the venue is renamed or merged.
    ---------------------------------------------------------------------------- */
 
+// Manager pay for a show: a non-negative amount in ₹, or null when not set.
+const parseManagerPay = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+
 const cleanVenueName = (name) => String(name || "").trim().replace(/\s+/g, " ").slice(0, 120);
 
 /** A venue from `venue_id`, or found / created from a typed `location` name. */
@@ -1081,6 +1089,7 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
     const managerId = req.body.manager_id ? Number(req.body.manager_id) : null;
     const employeeIds = [...new Set((req.body.employee_ids || []).map(Number))];
     const employeePay = req.body.employee_pay || {};
+    const managerPay = parseManagerPay(req.body.manager_pay);
     const manager = managerId ? await byId(managerId) : null;
 
     if (!date || !time || !venue || !manager || manager.role !== "manager") {
@@ -1102,8 +1111,8 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
     const id = `${prefix}${String(Number(max) + 1).padStart(2, "0")}`;
 
     const [newShow] = await sql`
-      INSERT INTO shows (id, date, time, location, venue_id, manager_id, employee_ids, employee_pay)
-      VALUES (${id}, ${date}, ${time}, ${venue.name}, ${venue.id}, ${managerId}, ${employeeIds}, ${JSON.stringify(employeePay)})
+      INSERT INTO shows (id, date, time, location, venue_id, manager_id, employee_ids, employee_pay, manager_pay)
+      VALUES (${id}, ${date}, ${time}, ${venue.name}, ${venue.id}, ${managerId}, ${employeeIds}, ${JSON.stringify(employeePay)}, ${managerPay})
       RETURNING *
     `;
 
@@ -1127,6 +1136,7 @@ const forViewer = (user, show) => {
   return {
     ...show,
     employee_pay: {},
+    manager_pay: null,
     employees: show.employees.map((e) => ({ ...e, pay: null })),
     attendance: user.role === "employee"
       ? show.attendance.filter((entry) => entry.user_id === user.id)
@@ -1170,6 +1180,7 @@ app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), asyn
     const employeePay = req.body.employee_pay !== undefined
       ? req.body.employee_pay
       : (show.employee_pay || {});
+    const managerPay = req.body.manager_pay !== undefined ? parseManagerPay(req.body.manager_pay) : show.manager_pay;
 
     if (req.body.manager_id !== undefined) {
       const manager = await byId(managerId);
@@ -1190,7 +1201,8 @@ app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), asyn
           venue_id = ${venue.id},
           manager_id = ${managerId},
           employee_ids = ${employeeIds},
-          employee_pay = ${JSON.stringify(employeePay)}
+          employee_pay = ${JSON.stringify(employeePay)},
+          manager_pay = ${managerPay}
       WHERE id = ${req.params.id}
       RETURNING *
     `;
@@ -1305,7 +1317,7 @@ app.get("/api/profile", authenticate, async (req, res) => {
       ...s,
       date: s.date instanceof Date ? s.date.toISOString().split("T")[0] : s.date,
       // Pay is admin-only.
-      ...(!canSeePay(req.user) && { employee_pay: {} })
+      ...(!canSeePay(req.user) && { employee_pay: {}, manager_pay: null })
     }));
 
     const filteredAttendance = allAttendance.filter((entry) => {
@@ -1371,6 +1383,7 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
       Manager: user.name,
       Username: user.username,
       "Shows Managed": allShows.filter((show) => show.manager_id === user.id).length,
+      "Manager Pay (₹)": allShows.filter((show) => show.manager_id === user.id).reduce((sum, show) => sum + (Number(show.manager_pay) || 0), 0) || "",
       "Approvals Done": allAttendance.filter((entry) => entry.reviewed_by === user.id).length,
       "Pending Reviews": allAttendance.filter((entry) => {
         const show = allShows.find((candidate) => candidate.id === entry.show_id);
@@ -1384,6 +1397,7 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
     Time: show.time,
     Venue: show.location,
     Manager: allUsers.find((u) => u.id === show.manager_id)?.name || "Unknown",
+    "Manager Pay (₹)": show.manager_pay != null ? Number(show.manager_pay) : "",
     "Assigned Artists": show.employee_ids.length,
     "Marked Attendance": allAttendance.filter((entry) => entry.show_id === show.id).length,
     Approved: allAttendance.filter(
@@ -1402,8 +1416,8 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
       24, 28, 14, 12, 30, 16, 22, 14, 18, 18, 24, 24
     ]),
     toWorkbookSheet("Artist Totals", summaryByEmployee, [24, 28, 16, 16, 18, 16, 18, 12]),
-    toWorkbookSheet("Manager Totals", summaryByManager, [24, 28, 16, 16, 16]),
-    toWorkbookSheet("Show Summary", showSummary, [16, 14, 12, 30, 22, 16, 18, 12, 12, 12])
+    toWorkbookSheet("Manager Totals", summaryByManager, [24, 28, 16, 18, 16, 16]),
+    toWorkbookSheet("Show Summary", showSummary, [16, 14, 12, 30, 22, 18, 16, 18, 12, 12, 12])
   ], {
     fontFamily: "Arial",
     fontSize: 11

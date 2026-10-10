@@ -1078,7 +1078,7 @@ function ShowSheet({ show, user, onClose }) {
     }
   };
 
-  const totalPay = Object.values(show.employee_pay || {}).reduce((sum, v) => sum + (Number(v) || 0), 0);
+  const totalPay = Object.values(show.employee_pay || {}).reduce((sum, v) => sum + (Number(v) || 0), 0) + (Number(show.manager_pay) || 0);
   const singerEntry = show.attendance[0];
   const sState = singerState(show);
 
@@ -1100,7 +1100,10 @@ function ShowSheet({ show, user, onClose }) {
   return (
     <Sheet title={show.location} subtitle={`${longDate(show.date)} · ${formatTime(show.time)}`} onClose={onClose} footer={footer}>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-[13px]">
-        <Detail label="Manager" value={show.manager?.name || "—"} />
+        <Detail
+          label="Manager"
+          value={`${show.manager?.name || "—"}${admin && show.manager_pay != null ? ` · ${inr(show.manager_pay)}` : ""}`}
+        />
         <Detail label="Show ID" value={show.id} />
         {staff ? (
           <>
@@ -1235,7 +1238,8 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
     location: show?.location || "",
     manager_id: show?.manager_id ?? "",
     employee_ids: show?.employee_ids || show?.employees.map((e) => e.id) || [],
-    employee_pay: { ...(show?.employee_pay || {}) }
+    employee_pay: { ...(show?.employee_pay || {}) },
+    manager_pay: show?.manager_pay ?? ""
   }));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1253,7 +1257,8 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
   const setPay = (id, value) =>
     setForm((current) => ({ ...current, employee_pay: { ...current.employee_pay, [String(id)]: value === "" ? null : Number(value) } }));
 
-  const totalPay = form.employee_ids.reduce((sum, id) => sum + (Number(form.employee_pay[String(id)]) || 0), 0);
+  const singerPay = form.employee_ids.reduce((sum, id) => sum + (Number(form.employee_pay[String(id)]) || 0), 0);
+  const totalPay = singerPay + (Number(form.manager_pay) || 0);
   const visibleSingers = singers.filter((s) => s.name.toLowerCase().includes(query.trim().toLowerCase()));
 
   const save = async () => {
@@ -1269,7 +1274,8 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
       location: form.location.trim(),
       manager_id: Number(form.manager_id),
       employee_ids: form.employee_ids.map(Number),
-      employee_pay: form.employee_pay
+      employee_pay: form.employee_pay,
+      manager_pay: form.manager_pay === "" ? null : Number(form.manager_pay)
     };
     try {
       if (show) {
@@ -1318,20 +1324,46 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
             <input className="input" type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} />
           </Field>
         </div>
-        <Field label="Manager">
-          <select className="input" value={form.manager_id} onChange={(e) => setForm({ ...form, manager_id: e.target.value })}>
-            <option value="">{managers.length ? "Choose a manager" : "No managers yet"}</option>
-            {[...managers].sort((a, b) => a.name.localeCompare(b.name)).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-        </Field>
+        <div className="field">
+          <span className="field-label">Manager & pay</span>
+          <div className="flex gap-2">
+            <select
+              className="input min-w-0 flex-1"
+              aria-label="Manager"
+              value={form.manager_id}
+              onChange={(e) => setForm({ ...form, manager_id: e.target.value })}
+            >
+              <option value="">{managers.length ? "Choose a manager" : "No managers yet"}</option>
+              {[...managers].sort((a, b) => a.name.localeCompare(b.name)).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+            <div className="input-prefix w-[7.5rem] flex-none">
+              <span>₹</span>
+              <input
+                className="input text-right"
+                type="number"
+                inputMode="numeric"
+                min="0"
+                step="100"
+                placeholder="Pay"
+                aria-label="Manager pay"
+                value={form.manager_pay}
+                onChange={(e) => setForm({ ...form, manager_pay: e.target.value })}
+              />
+            </div>
+          </div>
+          <span className="field-hint">Manager pay counts as due once the show has started.</span>
+        </div>
       </div>
 
       <div className="mb-2 mt-6 flex items-end justify-between gap-3">
         <div>
           <h3 className="section-label">Singers & pay</h3>
-          <p className="text-xs subtle">{form.employee_ids.length} selected</p>
+          <p className="text-xs subtle">{form.employee_ids.length} selected · {inr(singerPay)}</p>
         </div>
-        <span className="text-[13px] font-semibold">{inr(totalPay)}</span>
+        <span className="text-right text-[13px] font-semibold">
+          <span className="block text-xs font-normal subtle">Total incl. manager</span>
+          {inr(totalPay)}
+        </span>
       </div>
       {singers.length > 6 && (
         <div className="relative mb-2">
@@ -1597,7 +1629,8 @@ function CopyMonthSheet({ shows, sourceMonth, onClose, onDone }) {
             location: show.location,
             manager_id: show.manager_id,
             employee_ids: show.employee_ids,
-            employee_pay: show.employee_pay
+            employee_pay: show.employee_pay,
+            manager_pay: show.manager_pay
           }
         });
       }
@@ -1779,7 +1812,13 @@ function MemberSheet({ person, shows, today, user, onClose }) {
       <h3 className="section-label mb-2 mt-6">{monthLabel(month)}</h3>
       <div className="kpis !grid-cols-2">
         <Kpi label={singer ? "Shows assigned" : person.role === "manager" ? "Shows managed" : "Shows"} value={singer || person.role === "manager" ? assigned.length : monthShows.length} />
-        {singer ? <Kpi label="Earned (approved)" value={inr(earned)} /> : <Kpi label="To review" value={pendingEntries(assigned).length} />}
+        {singer ? (
+          <Kpi label="Earned (approved)" value={inr(earned)} />
+        ) : person.role === "manager" ? (
+          <Kpi label="Manager pay (shows played)" value={inr(assigned.filter(hasStarted).reduce((sum, s) => sum + (Number(s.manager_pay) || 0), 0))} />
+        ) : (
+          <Kpi label="To review" value={pendingEntries(assigned).length} />
+        )}
       </div>
 
       {(singer || person.role === "manager") && assigned.length > 0 && (
@@ -2107,7 +2146,11 @@ function ReportOverview({ model, period, cmpPeriod, onSeeAll, onOpen }) {
         <Kpi label="Shows" value={cur.shows} foot={cmp ? <Delta cur={cur.shows} cmp={cmp.shows} suffix={vs} /> : vs} />
         <Kpi label="Spots approved" value={`${cur.approved}/${cur.due}`} foot={cmp ? <Delta cur={cur.approved} cmp={cmp.approved} suffix={vs} /> : "Approved of spots played"} />
         <Kpi label="Attendance rate" value={pct(cur.rate)} foot={cmp ? <Delta cur={cur.rate} cmp={cmp.rate} kind="rate" suffix={vs} /> : "Approved ÷ spots played"} />
-        <Kpi label="Pay due" value={inr(cur.pay)} foot={cmp ? <Delta cur={cur.pay} cmp={cmp.pay} kind="money" suffix={vs} /> : "Approved shows only"} />
+        <Kpi
+          label="Pay due"
+          value={inr(cur.total)}
+          foot={cmp ? <Delta cur={cur.total} cmp={cmp.total} kind="money" suffix={vs} /> : `Singers ${inr(cur.pay)} · managers ${inr(cur.managerPay)}`}
+        />
       </div>
 
       <section className="card">
@@ -2123,6 +2166,7 @@ function ReportOverview({ model, period, cmpPeriod, onSeeAll, onOpen }) {
           <TrendChart
             months={months}
             metric={metric}
+            payKey="total"
             series={[
               { label: periodLabel(period) === "All time" ? "Last 12 months" : "This period", slots: model.slots },
               ...(cmpPeriod ? [{ label: "A year earlier", slots: model.slots, shift: -12 }] : [])
@@ -2144,7 +2188,7 @@ function TopList({ model, dimId, period, onSeeAll, onOpen }) {
   const dim = model.dims[dimId];
   const rows = entityRows(model, dimId, period, null)
     .filter((r) => r.cur.spots > 0)
-    .sort((a, b) => b.cur.pay - a.cur.pay || b.cur.approved - a.cur.approved)
+    .sort((a, b) => b.cur[dim.payKey] - a.cur[dim.payKey] || b.cur.approved - a.cur.approved)
     .slice(0, 5);
 
   return (
@@ -2165,7 +2209,7 @@ function TopList({ model, dimId, period, onSeeAll, onOpen }) {
               <p className="row-title">{r.name}</p>
               <p className="row-sub">{plural(r.cur.shows, "show")} · {pct(r.cur.rate)} attended</p>
             </div>
-            <span className="text-[13px] font-semibold">{inr(r.cur.pay)}</span>
+            <span className="text-[13px] font-semibold">{inr(r.cur[dim.payKey])}</span>
           </button>
         ))
       )}
@@ -2188,7 +2232,12 @@ function ReportBreakdown({ model, dimId, period, cmpPeriod, onOpen }) {
   const q = query.trim().toLowerCase();
   const rows = entityRows(model, dimId, period, cmpPeriod)
     .filter((r) => !q || r.name.toLowerCase().includes(q))
-    .sort((a, b) => (sort === "name" ? a.name.localeCompare(b.name) : (b.cur[sort] ?? -1) - (a.cur[sort] ?? -1) || a.name.localeCompare(b.name)));
+    .sort((a, b) => {
+      if (sort === "name") return a.name.localeCompare(b.name);
+      const key = sort === "pay" ? dim.payKey : sort;
+      return (b.cur[key] ?? -1) - (a.cur[key] ?? -1) || a.name.localeCompare(b.name);
+    });
+  const pk = dim.payKey;
   const total = summarize(slotsIn(model.slots, period));
   const totalCmp = cmpPeriod ? summarize(slotsIn(model.slots, cmpPeriod)) : null;
 
@@ -2227,14 +2276,14 @@ function ReportBreakdown({ model, dimId, period, cmpPeriod, onOpen }) {
                     <p className="row-sub">{plural(r.cur.shows, "show")} · {r.cur.approved}/{r.cur.due} approved · {pct(r.cur.rate)}</p>
                   </div>
                   <div className="flex flex-none flex-col items-end">
-                    <span className="text-[13px] font-semibold">{inr(r.cur.pay)}</span>
-                    {r.cmp && <Delta cur={r.cur.pay} cmp={r.cmp.pay} kind="money" compact />}
+                    <span className="text-[13px] font-semibold">{inr(r.cur[pk])}</span>
+                    {r.cmp && <Delta cur={r.cur[pk]} cmp={r.cmp[pk]} kind="money" compact />}
                   </div>
                 </button>
               ))}
               <div className="row bg-surface-2 font-semibold">
                 <span className="row-main">Total · {plural(total.shows, "show")}</span>
-                <span>{inr(total.pay)}</span>
+                <span>{inr(total[pk])}</span>
               </div>
             </div>
             <table className="table hidden lg:table">
@@ -2245,7 +2294,7 @@ function ReportBreakdown({ model, dimId, period, cmpPeriod, onOpen }) {
                   <th className="num">Spots</th>
                   <th className="num">Approved</th>
                   <th className="num">Rate</th>
-                  <th className="num">Pay due</th>
+                  <th className="num">{dim.payLabel}</th>
                   {cmpPeriod && <th className="num">vs {periodShort(cmpPeriod)}</th>}
                 </tr>
               </thead>
@@ -2262,8 +2311,8 @@ function ReportBreakdown({ model, dimId, period, cmpPeriod, onOpen }) {
                     <td className="num">{r.cur.spots}</td>
                     <td className="num">{r.cur.approved}</td>
                     <td className="num">{pct(r.cur.rate)}</td>
-                    <td className="num font-semibold">{inr(r.cur.pay)}</td>
-                    {cmpPeriod && <td className="num"><Delta cur={r.cur.pay} cmp={r.cmp.pay} kind="money" compact /></td>}
+                    <td className="num font-semibold">{inr(r.cur[pk])}</td>
+                    {cmpPeriod && <td className="num"><Delta cur={r.cur[pk]} cmp={r.cmp[pk]} kind="money" compact /></td>}
                   </tr>
                 ))}
               </tbody>
@@ -2274,8 +2323,8 @@ function ReportBreakdown({ model, dimId, period, cmpPeriod, onOpen }) {
                   <td className="num">{total.spots}</td>
                   <td className="num">{total.approved}</td>
                   <td className="num">{pct(total.rate)}</td>
-                  <td className="num">{inr(total.pay)}</td>
-                  {cmpPeriod && <td className="num"><Delta cur={total.pay} cmp={totalCmp.pay} kind="money" compact /></td>}
+                  <td className="num">{inr(total[pk])}</td>
+                  {cmpPeriod && <td className="num"><Delta cur={total[pk]} cmp={totalCmp[pk]} kind="money" compact /></td>}
                 </tr>
               </tfoot>
             </table>
@@ -2331,8 +2380,14 @@ function ReportEntitySheet({ model, dimId, entityKey, period, onClose }) {
     ["Approved", cur.approved, cmp?.approved, "count"],
     ["Rejected", cur.rejected, cmp?.rejected, "count"],
     ["Attendance rate", cur.rate, cmp?.rate, "rate"],
-    ["Pay due", cur.pay, cmp?.pay, "money"],
-    ["Pay planned", cur.payPlanned, cmp?.payPlanned, "money"]
+    [dim.payLabel, cur[dim.payKey], cmp?.[dim.payKey], "money"],
+    ...(dim.payKey === "total"
+      ? [
+          ["· singers", cur.pay, cmp?.pay, "money"],
+          ["· manager", cur.managerPay, cmp?.managerPay, "money"]
+        ]
+      : []),
+    ["Pay planned", cur[dim.planKey], cmp?.[dim.planKey], "money"]
   ];
   const fmt = (v, kind) => (kind === "money" ? inr(v) : kind === "rate" ? pct(v) : v ?? 0);
 
@@ -2387,7 +2442,7 @@ function ReportEntitySheet({ model, dimId, entityKey, period, onClose }) {
         </div>
       </div>
       <div className="card card-pad">
-        <TrendChart months={months} metric={metric} series={series} />
+        <TrendChart months={months} metric={metric} series={series} payKey={dim.payKey} />
       </div>
 
       {innerRows.length > 0 && (
@@ -2421,7 +2476,7 @@ function ReportEntitySheet({ model, dimId, entityKey, period, onClose }) {
                     <p className="row-title">{show.location}</p>
                     <p className="row-sub">{formatTime(show.time)} · {s.approved}/{s.spots} approved</p>
                   </div>
-                  <span className="text-[13px] font-medium">{inr(s.pay)}</span>
+                  <span className="text-[13px] font-medium">{inr(s[dim.payKey])}</span>
                 </div>
               );
             })}
@@ -2433,12 +2488,12 @@ function ReportEntitySheet({ model, dimId, entityKey, period, onClose }) {
 }
 
 /* Column chart, one or two series. Tap or hover a month to read it. */
-function TrendChart({ months, metric, series }) {
+function TrendChart({ months, metric, series, payKey = "total" }) {
   const [active, setActive] = useState(months.length - 1);
   const def = CHART_METRICS.find((m) => m.id === metric);
   const values = series.map((s) => {
     const byMonth = groupBy(s.slots, (slot) => slot.show.date.slice(0, 7));
-    return months.map((m) => def.value(summarize(byMonth[s.shift ? shiftMonth(m, s.shift) : m] || [])));
+    return months.map((m) => def.value(summarize(byMonth[s.shift ? shiftMonth(m, s.shift) : m] || []), payKey));
   });
   const max = niceMax(Math.max(1, ...values.flat()));
   const ticks = [max, max / 2, 0];
@@ -2529,7 +2584,7 @@ const REPORT_VIEWS = [
 const SERIES_COLORS = ["#b0652a", "#2f55a4"];
 
 const CHART_METRICS = [
-  { id: "pay", label: "Pay due", value: (s) => s.pay, format: (v) => inr(v), short: (v) => compactInr(v) },
+  { id: "pay", label: "Pay due", value: (s, payKey = "total") => s[payKey], format: (v) => inr(v), short: (v) => compactInr(v) },
   { id: "shows", label: "Shows", value: (s) => s.shows, format: (v) => String(v), short: (v) => String(Math.round(v)) },
   { id: "approved", label: "Approved", value: (s) => s.approved, format: (v) => String(v), short: (v) => String(Math.round(v)) }
 ];
@@ -2565,10 +2620,15 @@ function useReportModel() {
     );
 
     const dims = {
-      venue: { label: "Venues", one: "venue", keyOf: (s) => showVenueKey(s.show), nameOf: (k) => venueNames[k] || k, always: [] },
+      // payKey: which pay a row counts. Venues and teams: everything owed for their
+      // shows; singers: their own pay; managers: their own manager pay.
+      venue: { label: "Venues", one: "venue", payKey: "total", planKey: "totalPlanned", payLabel: "Pay due", keyOf: (s) => showVenueKey(s.show), nameOf: (k) => venueNames[k] || k, always: [] },
       team: {
         label: "Teams",
         one: "team",
+        payKey: "total",
+        planKey: "totalPlanned",
+        payLabel: "Pay due",
         keyOf: (s) => teamByShow[String(s.show.id)] || "none",
         nameOf: (k) => (k === "none" ? "No team" : teamNames[k] || "Removed team"),
         always: Object.keys(teamNames)
@@ -2576,6 +2636,9 @@ function useReportModel() {
       singer: {
         label: "Singers",
         one: "singer",
+        payKey: "pay",
+        planKey: "payPlanned",
+        payLabel: "Pay due",
         keyOf: (s) => String(s.singerId),
         nameOf: (k) => userNames[k] || "Former member",
         always: users.filter((u) => u.role === "employee").map((u) => String(u.id))
@@ -2583,6 +2646,9 @@ function useReportModel() {
       manager: {
         label: "Managers",
         one: "manager",
+        payKey: "managerPay",
+        planKey: "managerPlanned",
+        payLabel: "Manager pay",
         keyOf: (s) => String(s.show.manager_id),
         nameOf: (k) => userNames[k] || "Former manager",
         always: users.filter((u) => u.role === "manager").map((u) => String(u.id))
@@ -2613,8 +2679,13 @@ function entityRows(model, dimId, period, cmpPeriod) {
 
 function summarize(slots) {
   const shows = new Set();
-  const out = { shows: 0, spots: 0, due: 0, marked: 0, approved: 0, rejected: 0, pay: 0, payPlanned: 0, rate: null };
+  const out = { shows: 0, spots: 0, due: 0, marked: 0, approved: 0, rejected: 0, pay: 0, payPlanned: 0, managerPay: 0, managerPlanned: 0, rate: null };
   for (const s of slots) {
+    if (!shows.has(s.show.id)) {
+      const mp = Number(s.show.manager_pay) || 0;
+      out.managerPlanned += mp;
+      if (hasStarted(s.show)) out.managerPay += mp;
+    }
     shows.add(s.show.id);
     out.spots += 1;
     out.payPlanned += s.pay;
@@ -2628,6 +2699,9 @@ function summarize(slots) {
   }
   out.shows = shows.size;
   out.rate = out.due ? out.approved / out.due : null;
+  // What's owed: approved singer pay plus manager pay for shows already played.
+  out.total = out.pay + out.managerPay;
+  out.totalPlanned = out.payPlanned + out.managerPlanned;
   return out;
 }
 
