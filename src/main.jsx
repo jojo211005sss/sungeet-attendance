@@ -1233,7 +1233,7 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
     time: show?.time || "19:30",
     venue_id: show?.venue_id ?? null,
     location: show?.location || "",
-    manager_id: show?.manager_id ?? managers[0]?.id ?? "",
+    manager_id: show?.manager_id ?? "",
     employee_ids: show?.employee_ids || show?.employees.map((e) => e.id) || [],
     employee_pay: { ...(show?.employee_pay || {}) }
   }));
@@ -1258,7 +1258,7 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
 
   const save = async () => {
     if (!form.location.trim()) return setError("Pick or add a venue.");
-    if (!form.manager_id) return setError("Pick a manager. Add one in Team first if the list is empty.");
+    if (!form.manager_id) return setError(managers.length ? "Pick the manager for this show." : "Add a manager in Team first.");
     if (!form.employee_ids.length) return setError("Assign at least one singer.");
     setSaving(true);
     setError("");
@@ -1320,8 +1320,8 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
         </div>
         <Field label="Manager">
           <select className="input" value={form.manager_id} onChange={(e) => setForm({ ...form, manager_id: e.target.value })}>
-            {managers.length === 0 && <option value="">No managers yet</option>}
-            {managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            <option value="">{managers.length ? "Choose a manager" : "No managers yet"}</option>
+            {[...managers].sort((a, b) => a.name.localeCompare(b.name)).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </Field>
       </div>
