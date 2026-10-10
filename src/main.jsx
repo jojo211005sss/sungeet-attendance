@@ -66,6 +66,8 @@ function DataProvider({ children, token, user, onUnauthorized }) {
     };
   });
   const lastFetch = useRef(0);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const removeUser = useCallback((id) => {
     setState((s) => ({ ...s, users: s.users.filter((u) => u.id !== id) }));
@@ -78,25 +80,26 @@ function DataProvider({ children, token, user, onUnauthorized }) {
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setState((s) => ({ ...s, loading: true }));
     try {
-      const endpoints = [
-        api("/shows", { token }),
-        api("/profile", { token }),
-        api("/activity/today", { token })
-      ];
-
-      // Only admins can list users.
+      // The first request after a quiet spell wakes the server and the
+      // database, which can take a while; give it room and one retry.
+      const load = (path) => withRetry(() => api(path, { token, timeout: 20000 }));
       const admin = isAdmin(user);
-      if (admin) endpoints.push(api("/users", { token }), api("/venues", { token }));
-
-      const results = await Promise.all(endpoints);
+      const [shows, profile, activity, users, venues] = await Promise.all([
+        load("/shows"),
+        load("/profile"),
+        load("/activity/today"),
+        // Admin-only extras: if one fails, keep what we had instead of failing the whole app.
+        admin ? load("/users").catch(() => null) : null,
+        admin ? load("/venues").catch(() => null) : null
+      ]);
       lastFetch.current = Date.now();
 
       const data = {
-        shows: results[0].shows,
-        profile: results[1],
-        activity: { status: results[2].status, summary: results[2].summary },
-        users: admin ? results[3].users : [],
-        venues: admin ? results[4].venues : []
+        shows: shows.shows,
+        profile,
+        activity: { status: activity.status, summary: activity.summary },
+        users: users?.users ?? stateRef.current.users,
+        venues: venues?.venues ?? stateRef.current.venues
       };
       writeCache(user, "workspace", data);
       setState({ ...data, loading: false, initialLoadDone: true, error: "" });
@@ -282,6 +285,10 @@ function AuthenticatedApp({ user, onLogout }) {
    ========================================================================== */
 
 function LoginScreen({ onLogin }) {
+  // Wake the server and database while the person types their password.
+  useEffect(() => {
+    api("/health", { timeout: 20000 }).catch(() => {});
+  }, []);
   const [form, setForm] = useState({ username: "", password: "" });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -3442,14 +3449,23 @@ function Empty({ icon: Icon, title, copy, action }) {
 }
 
 function LoadError() {
-  const { refresh } = useData();
+  const { refresh, error, loading } = useData();
   return (
     <section className="card">
       <Empty
         icon={WarningCircle}
         title="Couldn't load your workspace"
-        copy="Check your connection and try again."
-        action={<button className="btn btn-secondary btn-sm mt-3" onClick={() => refresh()}>Try again</button>}
+        copy={
+          <>
+            Check your connection and try again.
+            {error && <span className="mt-2 block text-xs subtle">Details: {error}</span>}
+          </>
+        }
+        action={
+          <button className="btn btn-secondary btn-sm mt-3" onClick={() => refresh()} disabled={loading}>
+            {loading ? "Trying…" : "Try again"}
+          </button>
+        }
       />
     </section>
   );
@@ -3607,6 +3623,17 @@ function formatTime(time) {
 // ₹1,23,456.00 — Indian digit grouping.
 const inr = (amount) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(amount) || 0);
+
+/** Retry once after a timeout or dropped connection (not after a real error reply). */
+async function withRetry(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err.status) throw err;
+    await new Promise((r) => setTimeout(r, 800));
+    return fn();
+  }
+}
 
 /* Last-seen data, per user, so screens paint instantly on the next visit.
    Bump the version when the shape of cached data changes. Cleared on logout. */

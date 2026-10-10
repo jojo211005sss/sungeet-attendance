@@ -718,8 +718,16 @@ app.delete("/api/website/floaters/:id", ...websiteGuard, async (req, res) => {
   }
 });
 
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, now: new Date().toISOString(), db: "connected" });
+// Also wakes the database (the sign-in screen calls this), so the first real
+// request after a quiet spell doesn't pay for the cold start.
+app.get("/api/health", async (_req, res) => {
+  try {
+    await sql`SELECT 1`;
+    res.json({ ok: true, now: new Date().toISOString(), db: "connected" });
+  } catch (error) {
+    console.error("health db error:", error);
+    res.status(503).json({ ok: false, db: "unreachable" });
+  }
 });
 
 app.post("/api/auth/login", async (req, res) => {
