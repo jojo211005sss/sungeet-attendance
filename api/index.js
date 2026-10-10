@@ -767,7 +767,10 @@ if (process.env.DEV_LOGIN === "1" && !process.env.VERCEL && process.env.NODE_ENV
       return res.status(403).json({ message: "Dev login is local only" });
     }
     const role = isValidRole(req.body?.role) ? req.body.role : "admin";
-    const [user] = await sql`SELECT * FROM users WHERE role = ${role} ORDER BY id LIMIT 1`;
+    // Optional exact account (used to screenshot the demo singers/managers).
+    const [user] = req.body?.username
+      ? await sql`SELECT * FROM users WHERE username = ${normalizeUsername(req.body.username)}`
+      : await sql`SELECT * FROM users WHERE role = ${role} ORDER BY id LIMIT 1`;
     if (!user) return res.status(404).json({ message: `No ${role} account exists` });
     return res.json({ token: signToken(user), user: publicUser(user) });
   });

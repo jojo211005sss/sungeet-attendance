@@ -43,3 +43,14 @@ For security, please change the default passwords for all administrative account
 - Replace `JWT_SECRET` in `.env` before deployment.
 - Swap the seeded arrays in `server/index.js` with PostgreSQL-backed repositories.
 - Store hashed passwords only; the local seed uses `bcryptjs` for demo users.
+
+## Demo data
+
+The live database holds sample data so Reports and comparisons have something to show
+(Jan 2025 – Nov 2026: 237 shows, 8 singers, 2 managers, 7 venues). It is all tagged and can be removed at any time:
+
+```bash
+node scripts/demo-data.js remove
+```
+
+Run `node scripts/demo-data.js` to add it again. Demo people have usernames ending in `.demo@sunggeet.com` and random passwords (they can't sign in); demo show IDs start with `DEMO-`; team links are hidden website rows that never appear on the public site.

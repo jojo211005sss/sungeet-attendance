@@ -293,13 +293,22 @@ What each number means:
 | **Pay due** | Pay for **approved** attendance only. This is what to pay out. |
 | **Pay planned** | Pay for every assigned slot, approved or not. Shown in each item's detail panel. |
 
-**Monthly trend:** a 12-month chart. Switch between **Pay due**, **Shows** and **Approved**. Tap a month to see its exact numbers. With Compare on, blue bars show the same months a year earlier.
+**Monthly trend:** a 12-month chart. Switch between **Pay due**, **Shows** and **Approved**. Tap a month to see its exact numbers. With Compare on, **brass** bars are the period you picked and **blue** bars are the same months a year earlier:
+
+<p><img src="images/52b-reports-compare-trend.webp" width="300" alt="Trend chart comparing with a year earlier"></p>
+
+On a laptop, the overview with **Compare → Oct 2025** switched on looks like this:
+
+<p><img src="images/73-desktop-reports-overview.webp" width="720" alt="Reports overview on a laptop with comparison"></p>
+
+> **Tip:** the current month is still in progress, so it looks low next to a full month a year ago. To compare complete months, step back with **‹** (e.g. **Sept 2026 vs Sept 2025**).
 
 #### Look at each venue, team, singer or manager
 
 <p>
   <img src="images/53-reports-venues.webp" width="260" alt="Reports by venue">
   <img src="images/54-reports-compare-venues.webp" width="260" alt="Comparing two venues">
+  <img src="images/55-reports-venue-trend.webp" width="260" alt="Venue trend against another venue">
 </p>
 
 1. Tap a view: **Overview**, **Venues**, **Teams**, **Singers** or **Managers**.
@@ -309,6 +318,23 @@ What each number means:
    - Its own **12-month chart**.
    - **Who played there** (for a venue, team or manager) or **where they played** (for a singer).
    - **Every show** in the period.
+
+In the comparison table, the small **▲ / ▼** number under the second column is how much higher or lower **this** one is. For example, **▼ 9** next to Shows means this venue had 9 fewer shows than the one you compared it with.
+
+**Worked examples**
+
+| Question | Taps |
+|---|---|
+| Is this year better than last year? | **Year** → **Compare: 2025** → read the four numbers at the top. |
+| Which café pays out the most? | **Year** → **Venues** → **Sort by: Pay due**. |
+| Juniper Courtyard vs The Lantern Room? | **Venues** → tap **Juniper Courtyard Cafe** → **Another venue** → pick **The Lantern Room**. |
+| How did one singer do vs last year? | **Singers** → tap the singer → **Last year**. |
+| Which team plays most? | **Teams** → **Sort by: Shows**. |
+
+<p>
+  <img src="images/56-reports-singer.webp" width="260" alt="One singer's report">
+  <img src="images/57-reports-teams.webp" width="260" alt="Reports by team">
+</p>
 
 > **Teams** are taken from the website: a show counts for a team once it's published with **Team playing** set ([6.7](#67-website)). Shows without one appear under **No team**.
 

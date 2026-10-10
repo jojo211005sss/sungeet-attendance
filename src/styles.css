@@ -456,6 +456,8 @@ select.input {
    -------------------------------------------------------------------------- */
 
 .card {
+  /* In grid/flex layouts a card must be allowed to shrink below its longest line. */
+  min-width: 0;
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
   background: var(--surface);
@@ -517,6 +519,9 @@ button.row:active {
 .row-main {
   min-width: 0;
   flex: 1;
+  /* Long names truncate with "…" instead of pushing buttons off-screen
+     (a <button> row-main otherwise refuses to shrink). */
+  overflow: hidden;
 }
 
 .row-title {
