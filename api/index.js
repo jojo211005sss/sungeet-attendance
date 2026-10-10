@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import writeXlsxFile from "write-excel-file/node";
 import { Buffer } from "node:buffer";
 import { neon } from "@neondatabase/serverless";
+import { addDemoData, demoDataStatus, removeDemoData } from "../lib/demo-data.js";
 
 // Postgres DATE columns are parsed as local midnight and then serialized with
 // toISOString(); outside UTC (e.g. a dev machine in IST) every show date shifts
@@ -1042,6 +1043,34 @@ app.delete("/api/venues/:id", authenticate, requireRole("admin", "superior"), as
   if (count) return res.status(409).json({ message: "This venue has shows. Merge it into another venue instead." });
   await sql`DELETE FROM venues WHERE id = ${id}`;
   return res.json({ ok: true });
+});
+
+// Sample data for demos (lib/demo-data.js). Lets an admin load or clear it on
+// whichever database this server uses, with no database credentials needed.
+app.get("/api/demo-data", authenticate, requireRole("admin", "superior"), async (_req, res) => {
+  try {
+    return res.json(await demoDataStatus(sql));
+  } catch (error) {
+    console.error("demo-data status error:", error);
+    return res.status(500).json({ message: "Could not check sample data" });
+  }
+});
+
+app.post("/api/demo-data", authenticate, requireRole("admin", "superior"), async (req, res) => {
+  try {
+    if (req.body?.action === "remove") {
+      await removeDemoData(sql, websiteSql);
+      return res.json({ ...(await demoDataStatus(sql)), message: "Sample data removed" });
+    }
+    if (req.body?.action === "add") {
+      const added = await addDemoData(sql, websiteSql);
+      return res.json({ ...(await demoDataStatus(sql)), added, message: `Added ${added.shows} sample shows` });
+    }
+    return res.status(400).json({ message: "Action must be add or remove" });
+  } catch (error) {
+    console.error("demo-data error:", error);
+    return res.status(500).json({ message: "Could not update sample data" });
+  }
 });
 
 app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (req, res) => {

@@ -2017,10 +2017,78 @@ function ReportsPage() {
         <ReportBreakdown model={model} dimId={view} period={period} cmpPeriod={cmpPeriod} onOpen={(key) => setOpen({ dim: view, key })} />
       )}
 
+      <SampleDataCard />
+
       {open && (
         <ReportEntitySheet model={model} dimId={open.dim} entityKey={open.key} period={period} onClose={() => setOpen(null)} />
       )}
     </>
+  );
+}
+
+/* Load or clear the demo dataset (lib/demo-data.js) so Reports has something to show. */
+function SampleDataCard() {
+  const { token, refresh } = useData();
+  const { toast, confirm } = useUI();
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api("/demo-data", { token }).then(setStatus).catch(() => {});
+  }, [token]);
+
+  const run = async (action) => {
+    const ok = await confirm(
+      action === "add"
+        ? {
+            title: "Load sample data?",
+            body: "Adds about 230 sample shows (Jan 2025 to Nov 2026), 10 sample people and 7 venues, and publishes the upcoming sample gigs on the public website. Your real data isn't touched, and you can remove it all here.",
+            confirmLabel: "Load sample data"
+          }
+        : {
+            title: "Remove sample data?",
+            body: "Deletes every sample show, person, venue and website listing. Your real data stays.",
+            confirmLabel: "Remove",
+            danger: true
+          }
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const result = await api("/demo-data", { token, method: "POST", body: { action }, timeout: 60000 });
+      setStatus(result);
+      await refresh(true);
+      toast(result.message);
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!status) return null;
+  return (
+    <section className="card card-pad mt-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="card-title">Sample data</h2>
+          <p className="mt-0.5 text-[13px] muted">
+            {status.present
+              ? `${plural(status.shows, "sample show")} and ${plural(status.people, "sample person", "sample people")} are loaded. They're included in every number above.`
+              : "Load a realistic set of shows, people and pay to try Reports and comparisons."}
+          </p>
+        </div>
+        {status.present ? (
+          <button className="btn btn-danger" onClick={() => run("remove")} disabled={busy}>
+            <Trash size={16} /> {busy ? "Removing…" : "Remove sample data"}
+          </button>
+        ) : (
+          <button className="btn btn-secondary" onClick={() => run("add")} disabled={busy}>
+            <Plus size={16} /> {busy ? "Loading…" : "Load sample data"}
+          </button>
+        )}
+      </div>
+    </section>
   );
 }
 
