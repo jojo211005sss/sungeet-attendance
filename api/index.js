@@ -330,7 +330,7 @@ const attendanceLedgerRows = async () => {
         "Show Time": show.time,
         Venue: show.location,
         "Show ID": show.id,
-        Manager: manager.name,
+        Manager: manager?.name || "No manager",
         "Pay (₹)": pay != null ? Number(pay) : "",
         "Attendance Status": entry ? "Marked" : "Not Marked",
         "Approval Status": entry ? titleCase(entry.approval_status) : "Waiting",
@@ -1309,18 +1309,21 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
   const summaryByEmployee = allUsers
     .filter((user) => user.role === "employee")
     .map((user) => {
-      const totalPay = allShows.reduce((sum, show) => {
-        if (!show.employee_ids.includes(user.id)) return sum;
-        const payMap = show.employee_pay || {};
-        const pay = payMap[String(user.id)];
-        return sum + (pay != null ? Number(pay) : 0);
-      }, 0);
+      // Same rules as Reports: pay is due once the show is approved; planned is everything assigned.
+      const payOf = (show) => Number((show.employee_pay || {})[String(user.id)]) || 0;
+      const assigned = allShows.filter((show) => show.employee_ids.includes(user.id));
+      const approvedIds = new Set(allAttendance
+        .filter((entry) => entry.user_id === user.id && entry.approval_status === "approved")
+        .map((entry) => entry.show_id));
+      const payDue = assigned.filter((show) => approvedIds.has(show.id)).reduce((sum, show) => sum + payOf(show), 0);
+      const payPlanned = assigned.reduce((sum, show) => sum + payOf(show), 0);
 
       return {
         "Artist Name": user.name,
         Username: user.username,
-        "Assigned Shows": allShows.filter((show) => show.employee_ids.includes(user.id)).length,
-        "Total Pay (₹)": totalPay || "",
+        "Assigned Shows": assigned.length,
+        "Pay Due (₹)": payDue,
+        "Pay Planned (₹)": payPlanned,
         "Attendance Marked": allAttendance.filter((entry) => entry.user_id === user.id).length,
         "Approved Shows": allAttendance.filter(
           (entry) => entry.user_id === user.id && entry.approval_status === "approved"
@@ -1336,17 +1339,24 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
 
   const summaryByManager = allUsers
     .filter((user) => user.role === "manager")
-    .map((user) => ({
+    .map((user) => {
+      // Same rules as Reports: manager pay is due once the show has started.
+      const managed = allShows.filter((show) => show.manager_id === user.id);
+      const payOf = (list) => list.reduce((sum, show) => sum + (Number(show.manager_pay) || 0), 0);
+      const started = managed.filter((show) => new Date(`${show.date.toISOString().split("T")[0]}T${show.time}:00+05:30`) <= new Date());
+      return {
       Manager: user.name,
       Username: user.username,
-      "Shows Managed": allShows.filter((show) => show.manager_id === user.id).length,
-      "Manager Pay (₹)": allShows.filter((show) => show.manager_id === user.id).reduce((sum, show) => sum + (Number(show.manager_pay) || 0), 0) || "",
+      "Shows Managed": managed.length,
+      "Manager Pay Due (₹)": payOf(started),
+      "Manager Pay Planned (₹)": payOf(managed),
       "Approvals Done": allAttendance.filter((entry) => entry.reviewed_by === user.id).length,
       "Pending Reviews": allAttendance.filter((entry) => {
         const show = allShows.find((candidate) => candidate.id === entry.show_id);
         return show && show.manager_id === user.id && entry.approval_status === "pending";
       }).length
-    }));
+      };
+    });
 
   const showSummary = allShows.map((show) => ({
     "Show ID": show.id,
@@ -1372,8 +1382,8 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
     toWorkbookSheet("Attendance Ledger", rows, [
       24, 28, 14, 12, 30, 16, 22, 14, 18, 18, 24, 24
     ]),
-    toWorkbookSheet("Artist Totals", summaryByEmployee, [24, 28, 16, 16, 18, 16, 18, 12]),
-    toWorkbookSheet("Manager Totals", summaryByManager, [24, 28, 16, 18, 16, 16]),
+    toWorkbookSheet("Artist Totals", summaryByEmployee, [24, 28, 16, 16, 16, 18, 16, 18, 12]),
+    toWorkbookSheet("Manager Totals", summaryByManager, [24, 28, 16, 20, 22, 16, 16]),
     toWorkbookSheet("Show Summary", showSummary, [16, 14, 12, 30, 22, 18, 16, 18, 12, 12, 12])
   ], {
     fontFamily: "Arial",
