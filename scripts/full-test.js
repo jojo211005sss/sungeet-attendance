@@ -150,6 +150,20 @@ try {
   // Final state: S1 approved (1000), S2 rejected (1500), S3 pending (2000).
   // The manager made 1 of these decisions; the superior made the last one on S2.
 
+  // ---------- an admin who also performs ----------
+  const adminId = (await call("GET", "/users", admin)).data.users.find((u) => u.username === "sample.admin@sunggeet.com").id;
+  const showC = await call("POST", "/shows", admin, {
+    date: past, time: "18:00", location: venue, manager_id: M1, employee_ids: [S1, adminId], employee_pay: { [S1]: 700, [adminId]: 900 }
+  });
+  check("admin can be put on a show", showC.status === 201, JSON.stringify(showC.data).slice(0, 150));
+  if (showC.data.show) made.shows.push(showC.data.show.id);
+  const C = showC.data.show?.id;
+  check("manager still can't be put on a show", (await call("POST", "/shows", admin, { date: past, time: "18:00", location: venue, manager_id: M1, employee_ids: [M1] })).status === 400);
+  const eAdmin = await mark(admin, C);
+  check("admin marks their own attendance", eAdmin.status === 201);
+  check("superior still can't mark attendance", (await mark(superior, C)).status === 403);
+  check("manager approves the admin's attendance", (await review(tm, eAdmin, "approved")).status === 200);
+
   // ---------- what each role sees ----------
   const showsFor = async (t) => (await call("GET", "/shows", t)).data.shows;
   const singerShows = await showsFor(t1);
@@ -169,9 +183,9 @@ try {
 
   // ---------- profile numbers ----------
   const p1 = (await call("GET", "/profile", t1)).data.stats;
-  check("singer profile counts", p1.totalShows === 3 && p1.approvedShows === 1 && p1.pendingShows === 0, JSON.stringify(p1));
+  check("singer profile counts", p1.totalShows === 4 && p1.approvedShows === 1 && p1.pendingShows === 0, JSON.stringify(p1));
   const pm = (await call("GET", "/profile", tm)).data.stats;
-  check("manager profile counts", pm.approvedShows === 1 && pm.rejectedShows === 1 && pm.pendingShows === 1 && pm.approvalsDone === 1, JSON.stringify(pm));
+  check("manager profile counts", pm.approvedShows === 2 && pm.rejectedShows === 1 && pm.pendingShows === 1 && pm.approvalsDone === 2, JSON.stringify(pm));
 
   // ---------- Excel ----------
   const x = await call("GET", "/export/attendance.xlsx", admin);
@@ -180,15 +194,17 @@ try {
   check("Excel has 4 sheets", ["Attendance Ledger", "Artist Totals", "Manager Totals", "Show Summary"].every((n) => book[n]));
   const art = (n) => book["Artist Totals"].find((r) => r["Artist Name"] === `TEST ${n}`) || {};
   check("Excel pay due = approved only (S1 1200 + 0 future)", art("Singer One")["Pay Due (₹)"] === 1200, JSON.stringify(art("Singer One")));
-  check("Excel pay planned (S1 1200 + 800 + 0)", art("Singer One")["Pay Planned (₹)"] === 2000, JSON.stringify(art("Singer One")));
+  check("Excel pay planned (S1 1200 + 800 + 0 + 700)", art("Singer One")["Pay Planned (₹)"] === 2700, JSON.stringify(art("Singer One")));
   check("Excel rejected singer is due 0", art("Singer Two")["Pay Due (₹)"] === 0 && art("Singer Two").Rejected === 1);
   check("Excel pending singer is due 0", art("Singer Three")["Pay Due (₹)"] === 0 && art("Singer Three")["Pending Approval"] === 1);
   const man = book["Manager Totals"].find((r) => r.Manager === "TEST Manager") || {};
   check("Excel manager pay due = started shows (500)", man["Manager Pay Due (₹)"] === 500, JSON.stringify(man));
-  check("Excel manager pay planned (500 + 300)", man["Manager Pay Planned (₹)"] === 800);
-  check("Excel manager counts", man["Shows Managed"] === 3 && man["Approvals Done"] === 1 && man["Pending Reviews"] === 1, JSON.stringify(man));
+  check("Excel manager pay planned (500 + 300)", man["Manager Pay Planned (₹)"] === 800, JSON.stringify(man));
+  check("Excel manager counts", man["Shows Managed"] === 4 && man["Approvals Done"] === 2 && man["Pending Reviews"] === 1, JSON.stringify(man));
   const ledgerA = book["Attendance Ledger"].filter((r) => r["Show ID"] === A);
   check("Excel ledger rows per singer", ledgerA.length === 3 && ledgerA.find((r) => r["Artist Name"] === "TEST Singer One")["Pay (₹)"] === 1200);
+  const adm = book["Artist Totals"].find((r) => r.Username === "sample.admin@sunggeet.com") || {};
+  check("Excel lists the performing admin with their pay", adm["Pay Due (₹)"] >= 900, JSON.stringify(adm));
   const sum = book["Show Summary"].find((r) => r["Show ID"] === A) || {};
   check("Excel show summary", sum.Approved === 1 && sum.Rejected === 1 && sum.Pending === 1 && sum["Manager Pay (₹)"] === 500, JSON.stringify(sum));
 

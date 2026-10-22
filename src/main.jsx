@@ -61,6 +61,8 @@ function showPayout(show) {
   return singers.reduce((sum, id) => sum + (Number(pay[String(id)]) || 0), 0) + (Number(show.manager_pay) || 0);
 }
 const isStaff = (user) => user?.role !== "employee";
+// Who can be put on a show: singers, and admins who also perform.
+const canPerform = (user) => user?.role === "employee" || user?.role === "admin";
 
 /* ==========================================================================
    DATA
@@ -928,7 +930,7 @@ function ShowsPage({ user, initialFilter }) {
   const groups = groupByDate(current.list);
   const openShow = shows.find((s) => s.id === openId);
   const managers = users.filter((u) => u.role === "manager");
-  const singers = users.filter((u) => u.role === "employee");
+  const singers = users.filter(canPerform);
 
   return (
     <>
@@ -1060,7 +1062,7 @@ function ShowSheet({ show, user, onClose }) {
       <ShowEditor
         show={show}
         managers={users.filter((u) => u.role === "manager")}
-        singers={users.filter((u) => u.role === "employee")}
+        singers={users.filter(canPerform)}
         onClose={() => setEditing(false)}
         onSaved={() => setEditing(false)}
       />
@@ -1103,12 +1105,21 @@ function ShowSheet({ show, user, onClose }) {
   const received = show.revenue != null ? Number(show.revenue) : null;
   const singerEntry = show.attendance[0];
   const sState = singerState(show);
+  // An admin who is on the line-up marks their own attendance like a singer.
+  const performing = user.role === "admin" && (show.employee_ids || show.employees.map((e) => e.id)).includes(user.id);
+  const ownEntry = performing ? show.attendance.find((a) => a.user_id === user.id) : null;
+  const canMarkOwn = performing && !ownEntry && hasStarted(show);
 
   const footer = admin ? (
     <>
       <button className="btn btn-danger !flex-none" onClick={deleteShow} aria-label="Delete show">
         <Trash size={17} /> <span className="hidden sm:inline">Delete</span>
       </button>
+      {canMarkOwn && (
+        <button className="btn btn-brand" onClick={mark} disabled={marking}>
+          <Check size={17} weight="bold" /> {marking ? "Marking…" : "I performed"}
+        </button>
+      )}
       <button className="btn btn-primary" onClick={() => setEditing(true)}>
         <PencilSimple size={17} /> Edit show
       </button>
@@ -1350,7 +1361,7 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
         </div>
         <div className="form-grid form-grid-2 !grid-cols-2">
           <Field label="Date">
-            <input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+            <DateInput value={form.date} onChange={(date) => setForm({ ...form, date })} />
           </Field>
           <Field label="Start time">
             <input className="input" type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} />
@@ -3643,6 +3654,25 @@ function PageHead({ title, sub, actions }) {
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>
+  );
+}
+
+/* Date box that always reads day-month-year ("Fri, 23 Oct 2026"). The native
+   picker follows the device's language, which shows month/day/year on US
+   settings, so it sits invisibly on top and only opens the calendar. */
+function DateInput({ value, onChange }) {
+  return (
+    <span className="input date-input">
+      <span>{value ? longDate(value) : "Pick a date"}</span>
+      <CalendarBlank size={16} className="subtle" />
+      <input
+        type="date"
+        aria-label="Date"
+        value={value}
+        onChange={(e) => e.target.value && onChange(e.target.value)}
+        onClick={(e) => e.currentTarget.showPicker?.()}
+      />
+    </span>
   );
 }
 

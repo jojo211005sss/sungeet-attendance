@@ -217,10 +217,10 @@ const normalizeUsername =  (username)  => String(username || "").trim().toLowerC
 
 const isValidRole = (role) => ["employee", "manager", "admin", "superior"].includes(role);
 
-// Every assigned id must be an existing singer (role "employee").
+// Every assigned id must be an existing singer, or an admin who also performs.
 const allSingers = async (ids) => {
   if (!ids.length) return false;
-  const [{ count }] = await sql`SELECT COUNT(*) FROM users WHERE id = ANY(${ids}) AND role = 'employee'`;
+  const [{ count }] = await sql`SELECT COUNT(*) FROM users WHERE id = ANY(${ids}) AND role IN ('employee', 'admin')`;
   return Number(count) === ids.length;
 };
 
@@ -349,7 +349,7 @@ const attendanceLedgerRows = async () => {
       return {
         "Artist Name": employee.name,
         "Artist Username": employee.username,
-        "Show Date": show.date.toISOString().split("T")[0],
+        "Show Date": indianDate(show.date),
         "Show Time": show.time,
         Venue: show.location,
         "Show ID": show.id,
@@ -369,6 +369,9 @@ const titleCase = (value) =>
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+
+// Excel dates in Indian order: 23/10/2026.
+const indianDate = (date) => date.toISOString().slice(0, 10).split("-").reverse().join("/");
 
 const formatTimestamp = (value) =>
   new Intl.DateTimeFormat("en-IN", {
@@ -1267,7 +1270,7 @@ app.delete("/api/shows/:id", authenticate, requireRole("admin"), async (req, res
   }
 });
 
-app.post("/api/attendance", authenticate, requireRole("employee"), async (req, res) => {
+app.post("/api/attendance", authenticate, requireRole("employee", "admin"), async (req, res) => {
   const { show_id } = req.body;
   const showResult = await sql`SELECT * FROM shows WHERE id = ${show_id}`;
   const show = showResult[0];
@@ -1398,7 +1401,8 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
   const withProfit = canSeeRevenue(req.user) && (await settingOn("show_profit"));
 
   const summaryByEmployee = allUsers
-    .filter((user) => user.role === "employee")
+    // Singers, plus admins who also perform.
+    .filter((user) => user.role === "employee" || (user.role === "admin" && allShows.some((show) => show.employee_ids.includes(user.id))))
     .map((user) => {
       // Same rules as Reports: pay is due once the show is approved; planned is everything assigned.
       const payOf = (show) => Number((show.employee_pay || {})[String(user.id)]) || 0;
@@ -1451,7 +1455,7 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
 
   const showSummary = allShows.map((show) => ({
     "Show ID": show.id,
-    Date: show.date.toISOString().split("T")[0],
+    Date: indianDate(show.date),
     Time: show.time,
     Venue: show.location,
     Manager: allUsers.find((u) => u.id === show.manager_id)?.name || "Unknown",

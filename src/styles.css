@@ -449,6 +449,24 @@ select.input {
   opacity: 0.6;
 }
 
+.date-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.date-input input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
 /* Mock data switch, top left of every page for admins. */
 .mock-toggle {
   display: inline-flex;
