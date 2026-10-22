@@ -52,7 +52,7 @@ const PORT = process.env.PORT || 4000;
 // Bump SCHEMA_VERSION whenever a step is added below. A server that starts on
 // an up-to-date database then skips every step: ALTER TABLE locks the table,
 // and each new serverless copy used to run them all.
-const SCHEMA_VERSION = "4";
+const SCHEMA_VERSION = "5";
 let schemaReady;
 const ensureSchema = () =>
   (schemaReady ??= (async () => {
@@ -122,6 +122,27 @@ const ensureSchema = () =>
       )
     `;
     await sql`ALTER TABLE slow_requests ENABLE ROW LEVEL SECURITY`;
+    // Indexes on the columns shows and attendance are looked up by (Postgres
+    // doesn't index foreign keys on its own).
+    await sql`CREATE INDEX IF NOT EXISTS attendance_show_id_idx ON attendance (show_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS attendance_user_id_idx ON attendance (user_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS attendance_reviewed_by_idx ON attendance (reviewed_by)`;
+    await sql`CREATE INDEX IF NOT EXISTS shows_manager_id_idx ON shows (manager_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS shows_venue_id_idx ON shows (venue_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS shows_date_idx ON shows (date)`;
+    // Supabase: this app never uses the public Data API, so its roles get no
+    // access at all (RLS already blocks every row; this removes the grants too).
+    await sql.unsafe(`
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+          REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+          REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+          REVOKE ALL ON FUNCTION app.mock_on() FROM PUBLIC, anon, authenticated;
+        END IF;
+      END $$
+    `);
     await sql`
       INSERT INTO app_settings (key, value) VALUES ('schema_version', ${SCHEMA_VERSION})
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
