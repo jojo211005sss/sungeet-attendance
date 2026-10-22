@@ -11,3 +11,6 @@ dist
 # local UI preview, not shipped
 public/_preview.html
 public/preview/
+
+# logins with passwords, never commit
+private/

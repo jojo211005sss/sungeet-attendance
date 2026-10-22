@@ -34,6 +34,8 @@ Attendance and show management for SUNGGEET's live music team: singers mark show
 - 2026-10-08 (later): full UI/UX redesign, mobile-first, styled after workforce apps (Homebase/Connecteam/Linear). Light warm theme, Geist font, CSS tokens in `src/styles.css`. Phones: bottom tab bar (admin: Home/Shows/Team/Website/More), bottom sheets; desktop: sidebar + right-hand drawers. New: Home approvals inbox (approve/reject inline), Team page (search, roles, today's availability), Reports with pay in ₹, singer "Ready to mark" + earnings, toasts and in-app confirm dialogs instead of alert()/confirm(). Old Admin tab split into Team (members) and Shows (New show / edit in the show drawer); Excel export moved to Reports.
 
 ## In progress / next steps
+- 2026-10-22: 17 real singers + 4 sample accounts (sample.admin / sample.superior / sample.manager / sample.singer @sunggeet.com) added to the LOCAL DB with `scripts/add-members.js private/logins.csv` (logins + passwords in `private/logins.csv`, gitignored). NOT on prod yet: run with `TARGET_DATABASE_URL=<prod url from Neon console>`. Going to prod 2026-10-23.
+- Demo data: user wants it kept but "off". No hide toggle exists; Remove + Load gives back the identical (seeded) data. Decide: remove on prod, or build a real hide toggle.
 - Delete the QA test data from the live database: TEST Singer One, TEST Singer Two, TEST Manager, show SGT-0710-01 "TEST Venue Rooftop" (their password is `TEST_ACCOUNTS_PASSWORD` in `.env`).
 - Change the shared seed password on the real accounts (admin, Kabir, Aarav, Naina, Rhea): `scripts/change-password.js`.
 - User to check the Passwords app for any account using the leaked password and change it; mark the GitGuardian alert resolved.
