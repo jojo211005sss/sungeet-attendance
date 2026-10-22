@@ -61,6 +61,8 @@ async function init() {
     `;
 
     console.log("✅ Tables created successfully.");
+    // The API adds the newer columns and the venues table itself (ensureSchema).
+    if (process.argv.includes("--no-seed")) return;
 
     // 6. Seed Users
     //
