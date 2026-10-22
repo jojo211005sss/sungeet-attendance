@@ -1,5 +1,5 @@
 # SUNGGEET Attendance
-_Last updated: 2026-10-08_
+_Last updated: 2026-10-23 (3 AM, before the go-live presentation)_
 
 ## What this is
 Attendance and show management for SUNGGEET's live music team: singers mark shows they performed, managers approve, admins run shows, pay, Excel export, and the public website's content (Website tab).
@@ -9,6 +9,9 @@ Attendance and show management for SUNGGEET's live music team: singers mark show
 - Inside Claude Code, the "sungeet" preview in `.claude/launch.json` runs web on **5175** (5173/5174 are used by the `sunggeet main 1` public site) and pins the API to 4000.
 - `.env` needs: `DATABASE_URL`, `WEBSITE_DATABASE_URL`, `JWT_SECRET`, `ALLOWED_ORIGINS`, `SEED_PASSWORD` (see `.env.example`).
 - Live: https://sungeet-attendance.vercel.app. Every push to `main` auto-deploys on Vercel.
+- LIVE DATABASE = Supabase project "Sungeet attendace database" (ref ykizrwmonmhwfryvilyd, Singapore). Its address is `PROD_DATABASE_URL` in `.env` (and DATABASE_URL in Vercel). Local `DATABASE_URL` = Neon attendance_dev (testing only).
+- Test against the live DB from this Mac: preview "sungeet-prod-db" in `.claude/launch.json`, then `node scripts/full-test.js` (81 checks, cleans up after itself).
+- Backup: `node scripts/backup.js` (JSON into ~/Documents/Sunggeet Backups). Logins: `private/logins.csv` + `private/Sunggeet_Logins.docx` (gitignored).
 
 ## Done so far
 - Full QA pass (2026-10-07) as admin, singer and manager; everything below works and is live.
@@ -34,6 +37,9 @@ Attendance and show management for SUNGGEET's live music team: singers mark show
 - 2026-10-08 (later): full UI/UX redesign, mobile-first, styled after workforce apps (Homebase/Connecteam/Linear). Light warm theme, Geist font, CSS tokens in `src/styles.css`. Phones: bottom tab bar (admin: Home/Shows/Team/Website/More), bottom sheets; desktop: sidebar + right-hand drawers. New: Home approvals inbox (approve/reject inline), Team page (search, roles, today's availability), Reports with pay in ₹, singer "Ready to mark" + earnings, toasts and in-app confirm dialogs instead of alert()/confirm(). Old Admin tab split into Team (members) and Shows (New show / edit in the show drawer); Excel export moved to Reports.
 
 ## In progress / next steps
+- BEFORE SENDING LOGINS: turn Mock data OFF (top-left toggle) after the demo; add the real Chai Leela Thursday/Saturday shows; delete test member "jj2121" in Team; only send the 17 singer + admin blocks, keep sample accounts.
+- Optional cleanup: delete Neon project sunggeet-prod and the unused Supabase project "supabase" (Mumbai). Website DB (neondb on Neon) still has Neon's ~100 hours/month free limit; move it to Supabase if it ever hits that.
+- Hard-disk side project: user wants to talk about it later.
 - 2026-10-23 ~3:20 AM: Installed official skills supabase + supabase-postgres-best-practices (global). Audit vs their rules: pooling OK, queries <30ms, app.* views unreachable. Fixed (schema v5): indexes on attendance.show_id/user_id/reviewed_by, shows.manager_id/venue_id/date; revoked all anon/authenticated grants on public tables (app never uses Supabase Data API). Show form: errors pop up, "Show added" confirmation after the form closes. Live timeouts: client timeout 20s, schema setup skipped when SCHEMA_VERSION matches, slow requests (>3s) logged to slow_requests.
 - 2026-10-23 ~2:40 AM: PROD BUG FIXED. Live "Add member" timed out: Supabase session pooler (5432) kept one DB connection per Vercel instance connection and the free plan's ~15 ran out. lib/db.js now uses node-postgres (`pg`) through the TRANSACTION pooler (6543, forced in code), with a small sql`` tagged-template wrapper (+ sql.unsafe, sql.end). postgres.js is no longer used (it hung in transaction mode). Lesson: always load-test the LIVE site after DB changes, not just local.
 - 2026-10-23: Admins can also perform: they can be put on a show's line-up (`allSingers` allows admin) and mark their own attendance ("I performed" in show details); Excel lists performing admins. Dhruv (dhruv@sunggeet.com) is now admin; new dev.admin@sunggeet.com (password in private/logins.csv + Word file). Dates: show form uses DateInput (always "Fri, 23 Oct 2026"; native picker hidden on top), Excel dates are dd/mm/yyyy. full-test.js: 81 checks pass.
@@ -45,8 +51,6 @@ Attendance and show management for SUNGGEET's live music team: singers mark show
 - 2026-10-22: NEW PRODUCTION DATABASE. The old live DB (hand-typed hidden DATABASE_URL in Vercel, show "italy" / manager "jojo") was in a Neon account nobody could find, so prod moves to a Neon project the user owns: **sunggeet-prod** (endpoint `ep-falling-leaf-b3017vd3`, Singapore, database `neondb`). Its address is `PROD_DATABASE_URL` in `.env`. Set up with `node scripts/init-db.js --no-seed` (ids start at 1000), then `scripts/add-members.js private/logins.csv`: 17 singers + sample.admin / sample.superior / sample.manager / sample.singer @sunggeet.com. Tested locally (preview "sungeet-prod-db" in .claude/launch.json runs the app on it): all 21 password logins, show create, mark, approve, Excel. Logins for sending out: `private/Sunggeet_Logins.docx` (gitignored). No demo data on it.
 - 2026-10-22: DONE. Vercel DATABASE_URL (Production + Preview) now = sunggeet-prod (note on the variable says so), redeployed, user signed in on the live site as sample.admin. Old live DB (italy/jojo) is abandoned. TEST accounts and the old shared seed password no longer matter (not in the new DB).
 - Public website DB still has the demo gigs (they show on the public calendar) until removed.
-- Delete the QA test data from the live database: TEST Singer One, TEST Singer Two, TEST Manager, show SGT-0710-01 "TEST Venue Rooftop" (their password is `TEST_ACCOUNTS_PASSWORD` in `.env`).
-- Change the shared seed password on the real accounts (admin, Kabir, Aarav, Naina, Rhea): `scripts/change-password.js`.
 - User to check the Passwords app for any account using the leaked password and change it; mark the GitGuardian alert resolved.
 - Optional: make the GitHub repo private (old history still contains the leaked password, though no account uses it).
 - Optional: Mac-wide git guard in `~/.git-hooks` (blocks commits as the boss outside VMB) is written but switched OFF — needs the user's OK to test and enable (`git config --global core.hooksPath ~/.git-hooks`).
