@@ -1,8 +1,8 @@
 import "dotenv/config";
-import { neon } from "@neondatabase/serverless";
+import { connect } from "../lib/db.js";
 import bcrypt from "bcryptjs";
 
-const sql = neon(process.env.DATABASE_URL);
+const sql = connect(process.env.DATABASE_URL);
 
 async function init() {
   console.log("🚀 Starting Database Initialization...");
@@ -123,4 +123,4 @@ async function init() {
   }
 }
 
-init();
+init().finally(() => sql.end());

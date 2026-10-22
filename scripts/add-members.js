@@ -1,12 +1,12 @@
 import "dotenv/config";
 import fs from "node:fs";
-import { neon } from "@neondatabase/serverless";
+import { connect } from "../lib/db.js";
 import bcrypt from "bcryptjs";
 
 // Adds members from a CSV (name,username,password,role). Skips usernames that already exist.
 // Usage: node scripts/add-members.js private/logins.csv
 // Live DB: TARGET_DATABASE_URL=... node scripts/add-members.js private/logins.csv
-const sql = neon(process.env.TARGET_DATABASE_URL || process.env.DATABASE_URL);
+const sql = connect(process.env.TARGET_DATABASE_URL || process.env.DATABASE_URL);
 const file = process.argv[2];
 if (!file) {
   console.log("Usage: node scripts/add-members.js <file.csv>");
@@ -24,3 +24,4 @@ for (const [name, rawUsername, password, role] of rows) {
   `;
   console.log(user ? `added   ${username} (${role})` : `exists  ${username}`);
 }
+await sql.end();

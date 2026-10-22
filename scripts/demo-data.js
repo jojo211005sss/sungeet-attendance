@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { neon } from "@neondatabase/serverless";
+import { connect } from "../lib/db.js";
 import { addDemoData, removeDemoData } from "../lib/demo-data.js";
 
 // Sample data for demos (see lib/demo-data.js for what it adds and how it's tagged).
@@ -10,8 +10,8 @@ import { addDemoData, removeDemoData } from "../lib/demo-data.js";
 // This uses the database in your .env. Production has its own database: use the
 // "Sample data" card in Reports on the live site instead.
 
-const sql = neon(process.env.DATABASE_URL);
-const web = process.env.WEBSITE_DATABASE_URL ? neon(process.env.WEBSITE_DATABASE_URL) : null;
+const sql = connect(process.env.DATABASE_URL);
+const web = process.env.WEBSITE_DATABASE_URL ? connect(process.env.WEBSITE_DATABASE_URL) : null;
 
 try {
   if (process.argv[2] === "remove") {
@@ -25,3 +25,4 @@ try {
   console.error("❌ Demo data failed:", error);
   process.exit(1);
 }
+await Promise.all([sql.end(), web?.end()]);

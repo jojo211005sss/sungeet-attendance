@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import writeXlsxFile from "write-excel-file/node";
 import { Buffer } from "node:buffer";
-import { neon } from "@neondatabase/serverless";
+import { connect } from "../lib/db.js";
 import { addDemoData, demoDataStatus, removeDemoData } from "../lib/demo-data.js";
 
 // Postgres DATE columns are parsed as local midnight and then serialized with
@@ -16,7 +16,7 @@ process.env.TZ = "UTC";
 if (!process.env.DATABASE_URL) {
   throw new Error("CRITICAL: DATABASE_URL is not set. Please add it to your Vercel Environment Variables.");
 }
-const sql = neon(process.env.DATABASE_URL);
+const sql = connect(process.env.DATABASE_URL);
 
 /**
  * Second connection, to the PUBLIC WEBSITE's database.
@@ -29,7 +29,7 @@ const sql = neon(process.env.DATABASE_URL);
  * unaffected.
  */
 const websiteSql = process.env.WEBSITE_DATABASE_URL
-  ? neon(process.env.WEBSITE_DATABASE_URL)
+  ? connect(process.env.WEBSITE_DATABASE_URL)
   : null;
 
 const requireWebsiteDb = (_req, res, next) => {
@@ -201,45 +201,45 @@ const allSingers = async (ids) => {
   return Number(count) === ids.length;
 };
 
-const decorateShow = async (show) => {
-  try {
-    const manager = await byId(show.manager_id);
-    const employeeResults = await sql`SELECT * FROM users WHERE id = ANY(${show.employee_ids})`;
-    const attendanceResults = await sql`
+// Adds manager, singers (with pay) and attendance to shows, in three queries
+// however many shows there are.
+const decorateShows = async (shows) => {
+  if (!shows.length) return [];
+  const userIds = [...new Set(shows.flatMap((s) => [s.manager_id, ...s.employee_ids]).filter(Boolean))];
+  const [users, attendance] = await Promise.all([
+    userIds.length ? sql`SELECT * FROM users WHERE id = ANY(${userIds})` : [],
+    sql`
       SELECT a.*, u.name as employee_name, u.username as employee_username, u.role as employee_role,
              r.name as reviewer_name, r.username as reviewer_username, r.role as reviewer_role
       FROM attendance a
       JOIN users u ON a.user_id = u.id
       LEFT JOIN users r ON a.reviewed_by = r.id
-      WHERE a.show_id = ${show.id}
-    `;
+      WHERE a.show_id = ANY(${shows.map((s) => s.id)})
+    `
+  ]);
+  const userMap = Object.fromEntries(users.map((u) => [u.id, publicUser(u)]));
 
+  return shows.map((show) => {
     const payMap = show.employee_pay || {};
-
     return {
       ...show,
       date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date,
       employee_pay: payMap,
-      manager: manager ? publicUser(manager) : { name: "Unknown", role: "manager" },
-      employees: employeeResults.map((emp) => ({ ...publicUser(emp), pay: payMap[String(emp.id)] ?? null })),
-      attendance: attendanceResults.map((entry) => ({
+      manager: userMap[show.manager_id] || { name: "Unknown", role: "manager" },
+      employees: show.employee_ids.map((id) => ({
+        ...(userMap[id] || { name: "Unknown", role: "employee" }),
+        pay: payMap[String(id)] ?? null
+      })),
+      attendance: attendance.filter((a) => a.show_id === show.id).map((entry) => ({
         ...entry,
         employee: { id: entry.user_id, name: entry.employee_name, username: entry.employee_username, role: entry.employee_role },
         reviewer: entry.reviewed_by ? { id: entry.reviewed_by, name: entry.reviewer_name, username: entry.reviewer_username, role: entry.reviewer_role } : null
       }))
     };
-  } catch (error) {
-    console.error(`Error decorating show ${show.id}:`, error);
-    // Return a bare-minimum show object instead of crashing
-    return {
-      ...show,
-      date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date,
-      manager: { name: "Error Loading", role: "manager" },
-      employees: [],
-      attendance: []
-    };
-  }
+  });
 };
+
+const decorateShow = async (show) => (await decorateShows([show]))[0];
 
 
 const signToken = (user) =>
@@ -910,46 +910,7 @@ app.get("/api/shows", authenticate, async (req, res) => {
       return res.json({ shows: [] });
     }
 
-    // Bulk fetch all required data
-    const allManagerIds = [...new Set(visibleShowsRaw.map(s => s.manager_id).filter(Boolean))];
-    const allEmployeeIds = [...new Set(visibleShowsRaw.flatMap(s => s.employee_ids))];
-    const allShowIds = visibleShowsRaw.map(s => s.id);
-
-    const [managers, employees, attendance] = await Promise.all([
-      allManagerIds.length ? sql`SELECT * FROM users WHERE id = ANY(${allManagerIds})` : [],
-      allEmployeeIds.length ? sql`SELECT * FROM users WHERE id = ANY(${allEmployeeIds})` : [],
-      sql`
-        SELECT a.*, u.name as employee_name, u.username as employee_username, u.role as employee_role,
-               r.name as reviewer_name, r.username as reviewer_username, r.role as reviewer_role
-        FROM attendance a
-        JOIN users u ON a.user_id = u.id
-        LEFT JOIN users r ON a.reviewed_by = r.id
-        WHERE a.show_id = ANY(${allShowIds})
-      `
-    ]);
-
-    const userMap = Object.fromEntries([...managers, ...employees].map(u => [u.id, publicUser(u)]));
-
-    const visibleShows = visibleShowsRaw.map(show => {
-      const payMap = show.employee_pay || {};
-      const showAttendance = attendance.filter(a => a.show_id === show.id);
-      
-      return {
-        ...show,
-        date: show.date instanceof Date ? show.date.toISOString().split("T")[0] : show.date,
-        employee_pay: payMap,
-        manager: userMap[show.manager_id] || { name: "Unknown", role: "manager" },
-        employees: show.employee_ids.map(id => ({ 
-          ...(userMap[id] || { name: "Unknown", role: "employee" }), 
-          pay: payMap[String(id)] ?? null 
-        })),
-        attendance: showAttendance.map(entry => ({
-          ...entry,
-          employee: { id: entry.user_id, name: entry.employee_name, username: entry.employee_username, role: entry.employee_role },
-          reviewer: entry.reviewed_by ? { id: entry.reviewed_by, name: entry.reviewer_name, username: entry.reviewer_username, role: entry.reviewer_role } : null
-        }))
-      };
-    });
+    const visibleShows = await decorateShows(visibleShowsRaw);
 
     res.json({ shows: visibleShows.map((show) => forViewer(req.user, show)) });
   } catch (error) {
@@ -1117,9 +1078,7 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
     `;
 
     const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
-    const visibleShows = await Promise.all(
-      allShows.filter((show) => canAccessShow(req.user, show)).map(decorateShow)
-    );
+    const visibleShows = await decorateShows(allShows.filter((show) => canAccessShow(req.user, show)));
 
     return res.status(201).json({ show: await decorateShow(newShow), shows: visibleShows });
   } catch (error) {
@@ -1223,9 +1182,7 @@ app.delete("/api/shows/:id", authenticate, requireRole("admin"), async (req, res
     await sql`DELETE FROM shows WHERE id = ${id}`;
     
     const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
-    const visibleShows = await Promise.all(
-      allShows.filter((show) => canAccessShow(req.user, show)).map(decorateShow)
-    );
+    const visibleShows = await decorateShows(allShows.filter((show) => canAccessShow(req.user, show)));
     res.json({ shows: visibleShows });
   } catch (error) {
     console.error("Show deletion error:", error);

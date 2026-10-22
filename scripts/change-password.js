@@ -1,8 +1,8 @@
 import "dotenv/config";
-import { neon } from "@neondatabase/serverless";
+import { connect } from "../lib/db.js";
 import bcrypt from "bcryptjs";
 
-const sql = neon(process.env.DATABASE_URL);
+const sql = connect(process.env.DATABASE_URL);
 
 async function changePassword() {
   const username = process.argv[2];
@@ -32,4 +32,4 @@ async function changePassword() {
   }
 }
 
-changePassword();
+changePassword().finally(() => sql.end());
