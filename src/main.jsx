@@ -42,6 +42,24 @@ const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === "l
 
 const ROLE_LABEL = { employee: "Singer", manager: "Manager", admin: "Admin", superior: "Superior" };
 const isAdmin = (user) => user?.role === "admin" || user?.role === "superior";
+
+/* Profit (amount received minus payout) is admin-only and hidden until an admin
+   switches it on at the bottom of Reports. */
+function useProfitView() {
+  const { user, profile } = useData();
+  return user?.role === "admin" && !!profile?.settings?.show_profit;
+}
+
+/* What a show costs: approved singers' pay plus manager pay once it has started
+   (same as Reports "Pay due"); before that, everything planned. */
+function showPayout(show) {
+  const pay = show.employee_pay || {};
+  const ids = show.employee_ids || show.employees.map((e) => e.id);
+  const singers = hasStarted(show)
+    ? ids.filter((id) => show.attendance.some((a) => a.user_id === id && a.approval_status === "approved"))
+    : ids;
+  return singers.reduce((sum, id) => sum + (Number(pay[String(id)]) || 0), 0) + (Number(show.manager_pay) || 0);
+}
 const isStaff = (user) => user?.role !== "employee";
 
 /* ==========================================================================
@@ -1035,6 +1053,7 @@ function ShowSheet({ show, user, onClose }) {
   const [marking, setMarking] = useState(false);
   const admin = isAdmin(user);
   const staff = isStaff(user);
+  const profitView = useProfitView();
 
   if (editing) {
     return (
@@ -1081,6 +1100,7 @@ function ShowSheet({ show, user, onClose }) {
   };
 
   const totalPay = Object.values(show.employee_pay || {}).reduce((sum, v) => sum + (Number(v) || 0), 0) + (Number(show.manager_pay) || 0);
+  const received = show.revenue != null ? Number(show.revenue) : null;
   const singerEntry = show.attendance[0];
   const sState = singerState(show);
 
@@ -1111,6 +1131,13 @@ function ShowSheet({ show, user, onClose }) {
           <>
             <Detail label="Singers" value={show.employees.length} />
             {admin && <Detail label="Total pay" value={totalPay ? inr(totalPay) : "Not set"} />}
+            {profitView && <Detail label="Received" value={received != null ? inr(received) : "Not set"} />}
+            {profitView && (
+              <Detail
+                label={hasStarted(show) ? "Profit after payout" : "Expected profit"}
+                value={received != null ? <span className={received - showPayout(show) < 0 ? "text-bad" : ""}>{inr(received - showPayout(show))}</span> : "—"}
+              />
+            )}
           </>
         ) : (
           <>
@@ -1231,7 +1258,8 @@ function useReview() {
 
 /* Create or edit a show. Pay sits next to each singer so it's set in one pass. */
 function ShowEditor({ show, managers, singers, onClose, onSaved }) {
-  const { token, refresh, venues } = useData();
+  const { token, refresh, venues, user } = useData();
+  const profitView = useProfitView();
   const { toast } = useUI();
   const [form, setForm] = useState(() => ({
     date: show?.date || todayIST(),
@@ -1241,7 +1269,8 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
     manager_id: show?.manager_id ?? "",
     employee_ids: show?.employee_ids || show?.employees.map((e) => e.id) || [],
     employee_pay: { ...(show?.employee_pay || {}) },
-    manager_pay: show?.manager_pay ?? ""
+    manager_pay: show?.manager_pay ?? "",
+    revenue: show?.revenue ?? ""
   }));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1277,7 +1306,8 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
       manager_id: Number(form.manager_id),
       employee_ids: form.employee_ids.map(Number),
       employee_pay: form.employee_pay,
-      manager_pay: form.manager_pay === "" ? null : Number(form.manager_pay)
+      manager_pay: form.manager_pay === "" ? null : Number(form.manager_pay),
+      ...(user.role === "admin" && { revenue: form.revenue === "" ? null : Number(form.revenue) })
     };
     try {
       if (show) {
@@ -1355,6 +1385,29 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
           </div>
           <span className="field-hint">Manager pay counts as due once the show has started.</span>
         </div>
+        {user.role === "admin" && (
+          <Field
+            label="Received for this show"
+            hint={profitView && form.revenue !== ""
+              ? `Profit after paying everyone: ${inr(Number(form.revenue) - totalPay)}`
+              : "What the venue or client pays us. Only admins see this; you can change it any time."}
+          >
+            <div className="input-prefix">
+              <span>₹</span>
+              <input
+                className="input"
+                type="number"
+                inputMode="numeric"
+                min="0"
+                step="500"
+                placeholder="Amount received"
+                aria-label="Amount received for this show"
+                value={form.revenue}
+                onChange={(e) => setForm({ ...form, revenue: e.target.value })}
+              />
+            </div>
+          </Field>
+        )}
       </div>
 
       <div className="mb-2 mt-6 flex items-end justify-between gap-3">
@@ -1632,7 +1685,8 @@ function CopyMonthSheet({ shows, sourceMonth, onClose, onDone }) {
             manager_id: show.manager_id,
             employee_ids: show.employee_ids,
             employee_pay: show.employee_pay,
-            manager_pay: show.manager_pay
+            manager_pay: show.manager_pay,
+            revenue: show.revenue
           }
         });
       }
@@ -2067,11 +2121,46 @@ function ReportsPage() {
       )}
 
       {demo?.present && <SampleDataCard status={demo} onChange={setDemo} />}
+      <ProfitSwitch />
 
       {open && (
         <ReportEntitySheet model={model} dimId={open.dim} entityKey={open.key} period={period} onClose={() => setOpen(null)} />
       )}
     </>
+  );
+}
+
+/* Admin-only switch that reveals profit (amount received minus payout) in
+   Reports, show details and the Excel export. Off by default. */
+function ProfitSwitch() {
+  const { token, user, profile, refresh } = useData();
+  const { toast } = useUI();
+  const [busy, setBusy] = useState(false);
+  if (user.role !== "admin") return null;
+  const on = !!profile?.settings?.show_profit;
+
+  const flip = async (next) => {
+    setBusy(true);
+    try {
+      await api("/settings/show-profit", { token, method: "PUT", body: { on: next } });
+      await refresh(true);
+      toast(next ? "Profit is now shown" : "Profit is hidden");
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={`mt-6 ${busy ? "opacity-60" : ""}`}>
+      <Toggle
+        label="Show profit"
+        hint="Adds Received and Profit to Reports, show details and Excel. Only admins see it."
+        checked={on}
+        onChange={(next) => !busy && flip(next)}
+      />
+    </section>
   );
 }
 
@@ -2176,6 +2265,7 @@ function SampleDataCard({ status, onChange: setStatus }) {
 
 function ReportOverview({ model, period, cmpPeriod, onSeeAll, onOpen }) {
   const [metric, setMetric] = useState("pay");
+  const profitView = useProfitView();
   const cur = summarize(slotsIn(model.slots, period));
   const cmp = cmpPeriod ? summarize(slotsIn(model.slots, cmpPeriod)) : null;
   const vs = cmpPeriod ? `vs ${periodShort(cmpPeriod)}` : periodLabel(period);
@@ -2192,6 +2282,20 @@ function ReportOverview({ model, period, cmpPeriod, onSeeAll, onOpen }) {
           value={inr(cur.total)}
           foot={cmp ? <Delta cur={cur.total} cmp={cmp.total} kind="money" suffix={vs} /> : `Singers ${inr(cur.pay)} · managers ${inr(cur.managerPay)}`}
         />
+        {profitView && (
+          <>
+            <Kpi
+              label="Received"
+              value={inr(cur.received)}
+              foot={cmp ? <Delta cur={cur.received} cmp={cmp.received} kind="money" suffix={vs} /> : `${cur.priced} of ${cur.played} shows played have an amount`}
+            />
+            <Kpi
+              label="Profit"
+              value={<span className={cur.profit < 0 ? "text-bad" : ""}>{inr(cur.profit)}</span>}
+              foot={cmp ? <Delta cur={cur.profit} cmp={cmp.profit} kind="money" suffix={vs} /> : "Received minus singer and manager pay"}
+            />
+          </>
+        )}
       </div>
 
       <section className="card">
@@ -2720,12 +2824,21 @@ function entityRows(model, dimId, period, cmpPeriod) {
 
 function summarize(slots) {
   const shows = new Set();
-  const out = { shows: 0, spots: 0, due: 0, marked: 0, approved: 0, rejected: 0, pay: 0, payPlanned: 0, managerPay: 0, managerPlanned: 0, rate: null };
+  const out = { shows: 0, spots: 0, due: 0, marked: 0, approved: 0, rejected: 0, pay: 0, payPlanned: 0, managerPay: 0, managerPlanned: 0, rate: null, received: 0, profit: 0, priced: 0, played: 0 };
   for (const s of slots) {
     if (!shows.has(s.show.id)) {
       const mp = Number(s.show.manager_pay) || 0;
       out.managerPlanned += mp;
-      if (hasStarted(s.show)) out.managerPay += mp;
+      if (hasStarted(s.show)) {
+        out.managerPay += mp;
+        out.played += 1;
+        // Profit only counts shows with an amount received, so a missing amount doesn't read as a loss.
+        if (s.show.revenue != null) {
+          out.priced += 1;
+          out.received += Number(s.show.revenue);
+          out.profit += Number(s.show.revenue) - showPayout(s.show);
+        }
+      }
     }
     shows.add(s.show.id);
     out.spots += 1;

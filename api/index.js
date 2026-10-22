@@ -54,6 +54,8 @@ const ensureSchema = () =>
   (schemaReady ??= (async () => {
     await sql`ALTER TABLE shows ADD COLUMN IF NOT EXISTS employee_pay JSONB DEFAULT '{}'::jsonb`;
     await sql`ALTER TABLE shows ADD COLUMN IF NOT EXISTS manager_pay NUMERIC`;
+    // What the venue or client pays us for the show (admin only, feeds profit).
+    await sql`ALTER TABLE shows ADD COLUMN IF NOT EXISTS revenue NUMERIC`;
     await sql`
       CREATE TABLE IF NOT EXISTS venues (
         id SERIAL PRIMARY KEY,
@@ -948,8 +950,8 @@ app.get("/api/shows", authenticate, async (req, res) => {
    rewritten whenever the venue is renamed or merged.
    ---------------------------------------------------------------------------- */
 
-// Manager pay for a show: a non-negative amount in ₹, or null when not set.
-const parseManagerPay = (value) => {
+// Manager pay or amount received for a show: a non-negative amount in ₹, or null when not set.
+const parseAmount = (value) => {
   if (value === undefined || value === null || value === "") return null;
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : null;
@@ -1049,6 +1051,7 @@ app.get("/api/demo-data", authenticate, requireRole("admin", "superior"), async 
 // The mock data switch. Off hides every demo row in the app (see the app.*
 // views) and unpublishes the demo gigs on the public website; nothing is deleted.
 const mockOn = async () => (await sql`SELECT app.mock_on() AS on`)[0].on;
+const settingOn = async (key) => (await sql`SELECT value FROM app_settings WHERE key = ${key}`)[0]?.value === "on";
 const setMock = async (on) => {
   await sql`
     INSERT INTO app_settings (key, value) VALUES ('mock_data', ${on ? "on" : "off"})
@@ -1063,6 +1066,21 @@ app.get("/api/settings/mock-data", authenticate, requireRole("admin", "superior"
   } catch (error) {
     console.error("mock-data status error:", error);
     return res.status(500).json({ message: "Could not check mock data" });
+  }
+});
+
+// Profit view (Reports, show details, Excel): hidden until an admin turns it on.
+app.put("/api/settings/show-profit", authenticate, requireRole("admin"), async (req, res) => {
+  try {
+    if (typeof req.body?.on !== "boolean") return res.status(400).json({ message: "on must be true or false" });
+    await sql`
+      INSERT INTO app_settings (key, value) VALUES ('show_profit', ${req.body.on ? "on" : "off"})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    `;
+    return res.json({ on: req.body.on });
+  } catch (error) {
+    console.error("show-profit switch error:", error);
+    return res.status(500).json({ message: "Could not switch profit view" });
   }
 });
 
@@ -1103,7 +1121,8 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
     const managerId = req.body.manager_id ? Number(req.body.manager_id) : null;
     const employeeIds = [...new Set((req.body.employee_ids || []).map(Number))];
     const employeePay = req.body.employee_pay || {};
-    const managerPay = parseManagerPay(req.body.manager_pay);
+    const managerPay = parseAmount(req.body.manager_pay);
+    const revenue = canSeeRevenue(req.user) ? parseAmount(req.body.revenue) : null;
     const manager = managerId ? await byId(managerId) : null;
 
     if (!date || !time || !venue || !manager || manager.role !== "manager") {
@@ -1125,25 +1144,28 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
     const id = `${prefix}${String(Number(max) + 1).padStart(2, "0")}`;
 
     const [newShow] = await sql`
-      INSERT INTO shows (id, date, time, location, venue_id, manager_id, employee_ids, employee_pay, manager_pay)
-      VALUES (${id}, ${date}, ${time}, ${venue.name}, ${venue.id}, ${managerId}, ${employeeIds}, ${JSON.stringify(employeePay)}, ${managerPay})
+      INSERT INTO shows (id, date, time, location, venue_id, manager_id, employee_ids, employee_pay, manager_pay, revenue)
+      VALUES (${id}, ${date}, ${time}, ${venue.name}, ${venue.id}, ${managerId}, ${employeeIds}, ${JSON.stringify(employeePay)}, ${managerPay}, ${revenue})
       RETURNING *
     `;
 
     const allShows = await sql`SELECT * FROM app.shows ORDER BY date ASC`;
     const visibleShows = await decorateShows(allShows.filter((show) => canAccessShow(req.user, show)));
 
-    return res.status(201).json({ show: await decorateShow(newShow), shows: visibleShows });
+    return res.status(201).json({ show: forViewer(req.user, await decorateShow(newShow)), shows: visibleShows.map((show) => forViewer(req.user, show)) });
   } catch (error) {
     console.error("Show creation error:", error);
     return res.status(500).json({ message: "Failed to create show" });
   }
 });
 const canSeePay = (user) => user.role === "admin" || user.role === "superior";
+// What a show earns, and so profit, is for admins only.
+const canSeeRevenue = (user) => user.role === "admin";
 
 // Pay is admin-only: managers and singers never receive it. Singers also only
 // see their own attendance, not their colleagues'.
 const forViewer = (user, show) => {
+  if (!canSeeRevenue(user)) show = { ...show, revenue: null };
   if (canSeePay(user)) return show;
   return {
     ...show,
@@ -1192,7 +1214,8 @@ app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), asyn
     const employeePay = req.body.employee_pay !== undefined
       ? req.body.employee_pay
       : (show.employee_pay || {});
-    const managerPay = req.body.manager_pay !== undefined ? parseManagerPay(req.body.manager_pay) : show.manager_pay;
+    const managerPay = req.body.manager_pay !== undefined ? parseAmount(req.body.manager_pay) : show.manager_pay;
+    const revenue = req.body.revenue !== undefined && canSeeRevenue(req.user) ? parseAmount(req.body.revenue) : show.revenue;
 
     if (req.body.manager_id !== undefined) {
       const manager = await byId(managerId);
@@ -1214,12 +1237,13 @@ app.patch("/api/shows/:id", authenticate, requireRole("admin", "superior"), asyn
           manager_id = ${managerId},
           employee_ids = ${employeeIds},
           employee_pay = ${JSON.stringify(employeePay)},
-          manager_pay = ${managerPay}
+          manager_pay = ${managerPay},
+          revenue = ${revenue}
       WHERE id = ${req.params.id}
       RETURNING *
     `;
 
-    return res.json({ show: await decorateShow(updatedShow) });
+    return res.json({ show: forViewer(req.user, await decorateShow(updatedShow)) });
   } catch (error) {
     console.error("Show update error:", error);
     return res.status(500).json({ message: "Failed to update show" });
@@ -1236,7 +1260,7 @@ app.delete("/api/shows/:id", authenticate, requireRole("admin"), async (req, res
     
     const allShows = await sql`SELECT * FROM app.shows ORDER BY date ASC`;
     const visibleShows = await decorateShows(allShows.filter((show) => canAccessShow(req.user, show)));
-    res.json({ shows: visibleShows });
+    res.json({ shows: visibleShows.map((show) => forViewer(req.user, show)) });
   } catch (error) {
     console.error("Show deletion error:", error);
     res.status(500).json({ message: "Failed to delete show" });
@@ -1327,7 +1351,8 @@ app.get("/api/profile", authenticate, async (req, res) => {
       ...s,
       date: s.date instanceof Date ? s.date.toISOString().split("T")[0] : s.date,
       // Pay is admin-only.
-      ...(!canSeePay(req.user) && { employee_pay: {}, manager_pay: null })
+      ...(!canSeePay(req.user) && { employee_pay: {}, manager_pay: null }),
+      ...(!canSeeRevenue(req.user) && { revenue: null })
     }));
 
     const filteredAttendance = allAttendance.filter((entry) => {
@@ -1345,7 +1370,8 @@ app.get("/api/profile", authenticate, async (req, res) => {
       employee: userMap[entry.user_id] || { name: "Unknown", role: "employee" }
     }));
 
-    res.json({ stats, activity: userActivity });
+    const settings = canSeeRevenue(req.user) ? { show_profit: await settingOn("show_profit") } : {};
+    res.json({ stats, activity: userActivity, settings });
   } catch (error) {
     console.error("Error fetching profile:", error);
     res.status(500).json({ message: "Failed to load profile data" });
@@ -1353,11 +1379,23 @@ app.get("/api/profile", authenticate, async (req, res) => {
 });
 
 
-app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "superior"), async (_req, res) => {
+// What a show costs us: approved singers' pay plus manager pay once it has
+// started (same as Reports "Pay due"); before that, everything planned.
+const showStarted = (show) => new Date(`${show.date.toISOString().split("T")[0]}T${show.time}:00+05:30`) <= new Date();
+const showPayout = (show, attendance) => {
+  const pay = show.employee_pay || {};
+  const singers = showStarted(show)
+    ? attendance.filter((a) => a.show_id === show.id && a.approval_status === "approved").map((a) => a.user_id)
+    : show.employee_ids;
+  return singers.reduce((sum, id) => sum + (Number(pay[String(id)]) || 0), 0) + (Number(show.manager_pay) || 0);
+};
+
+app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "superior"), async (req, res) => {
   const rows = await attendanceLedgerRows();
   const allUsers = await sql`SELECT * FROM app.users`;
   const allShows = await sql`SELECT * FROM app.shows`;
   const allAttendance = await sql`SELECT * FROM app.attendance`;
+  const withProfit = canSeeRevenue(req.user) && (await settingOn("show_profit"));
 
   const summaryByEmployee = allUsers
     .filter((user) => user.role === "employee")
@@ -1396,7 +1434,7 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
       // Same rules as Reports: manager pay is due once the show has started.
       const managed = allShows.filter((show) => show.manager_id === user.id);
       const payOf = (list) => list.reduce((sum, show) => sum + (Number(show.manager_pay) || 0), 0);
-      const started = managed.filter((show) => new Date(`${show.date.toISOString().split("T")[0]}T${show.time}:00+05:30`) <= new Date());
+      const started = managed.filter(showStarted);
       return {
       Manager: user.name,
       Username: user.username,
@@ -1428,7 +1466,12 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
     ).length,
     Rejected: allAttendance.filter(
       (entry) => entry.show_id === show.id && entry.approval_status === "rejected"
-    ).length
+    ).length,
+    ...(withProfit && {
+      "Received (₹)": show.revenue != null ? Number(show.revenue) : "",
+      "Payout (₹)": showPayout(show, allAttendance),
+      "Profit (₹)": show.revenue != null ? Number(show.revenue) - showPayout(show, allAttendance) : ""
+    })
   }));
 
   const buffer = await writeXlsxFile([
@@ -1437,7 +1480,7 @@ app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "super
     ]),
     toWorkbookSheet("Artist Totals", summaryByEmployee, [24, 28, 16, 16, 16, 18, 16, 18, 12]),
     toWorkbookSheet("Manager Totals", summaryByManager, [24, 28, 16, 20, 22, 16, 16]),
-    toWorkbookSheet("Show Summary", showSummary, [16, 14, 12, 30, 22, 18, 16, 18, 12, 12, 12])
+    toWorkbookSheet("Show Summary", showSummary, [16, 14, 12, 30, 22, 18, 16, 18, 12, 12, 12, 14, 14, 14])
   ], {
     fontFamily: "Arial",
     fontSize: 11

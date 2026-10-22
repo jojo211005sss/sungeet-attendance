@@ -192,6 +192,26 @@ try {
   const sum = book["Show Summary"].find((r) => r["Show ID"] === A) || {};
   check("Excel show summary", sum.Approved === 1 && sum.Rejected === 1 && sum.Pending === 1 && sum["Manager Pay (₹)"] === 500, JSON.stringify(sum));
 
+  // ---------- amount received + profit ----------
+  const rev = await call("PATCH", `/shows/${A}`, admin, { revenue: 8000 });
+  check("admin sets amount received", rev.status === 200 && Number(rev.data.show.revenue) === 8000);
+  const rev2 = await call("PATCH", `/shows/${A}`, admin, { revenue: 9000 });
+  check("amount received can be changed later", Number(rev2.data.show.revenue) === 9000);
+  check("superior can't set amount received", Number((await call("PATCH", `/shows/${A}`, superior, { revenue: 1 })).data.show?.revenue ?? 9000) !== 1
+    && Number((await showsFor(admin)).find((s) => s.id === A).revenue) === 9000);
+  check("superior doesn't see amount received", (await showsFor(superior)).find((s) => s.id === A).revenue === null);
+  check("manager and singer don't see it", (await showsFor(tm)).find((s) => s.id === A).revenue === null && (await showsFor(t1)).find((s) => s.id === A).revenue === null);
+  check("only admins can switch profit on", (await call("PUT", "/settings/show-profit", superior, { on: true })).status === 403);
+  const before = (await call("GET", "/profile", admin)).data.settings?.show_profit;
+  check("admin switches profit on", (await call("PUT", "/settings/show-profit", admin, { on: true })).status === 200 && (await call("GET", "/profile", admin)).data.settings.show_profit === true);
+  const pbook = readXlsx((await call("GET", "/export/attendance.xlsx", admin)).data);
+  const prow = pbook["Show Summary"].find((r) => r["Show ID"] === A) || {};
+  // Played show A: approved S1 1200 + manager 500 = 1700 payout; 9000 - 1700 = 7300.
+  check("Excel profit = received - (approved pay + manager pay)", prow["Received (₹)"] === 9000 && prow["Payout (₹)"] === 1700 && prow["Profit (₹)"] === 7300, JSON.stringify(prow));
+  const sbook = readXlsx((await call("GET", "/export/attendance.xlsx", superior)).data);
+  check("superior's Excel has no profit columns", !("Profit (₹)" in (sbook["Show Summary"][0] || {})));
+  await call("PUT", "/settings/show-profit", admin, { on: !!before });
+
   // ---------- check-in ----------
   check("singer checks in", (await call("POST", "/activity", t1, { status: "active" })).status < 300);
   const act = (await call("GET", "/activity/today", admin)).data;
