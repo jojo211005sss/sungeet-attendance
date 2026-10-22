@@ -180,7 +180,7 @@ function UIProvider({ children }) {
   const toast = useCallback((message, tone = "default") => {
     const id = `${Date.now()}-${Math.random()}`;
     setToasts((list) => [...list, { id, message, tone }]);
-    setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), 3200);
+    setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), 5000);
   }, []);
 
   const confirm = useCallback((options) => new Promise((resolve) => setAsk({ ...options, resolve })), []);
@@ -1303,10 +1303,17 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
   const totalPay = singerPay + (Number(form.manager_pay) || 0);
   const visibleSingers = singers.filter((s) => s.name.toLowerCase().includes(query.trim().toLowerCase()));
 
+  // The form is long (the singer list), so a message at the bottom can be out
+  // of sight: show it as a pop-up too.
+  const fail = (message) => {
+    setError(message);
+    toast(message, "error");
+  };
+
   const save = async () => {
-    if (!form.location.trim()) return setError("Pick or add a venue.");
-    if (!form.manager_id) return setError(managers.length ? "Pick the manager for this show." : "Add a manager in Team first.");
-    if (!form.employee_ids.length) return setError("Assign at least one singer.");
+    if (!form.location.trim()) return fail("Pick or add a venue.");
+    if (!form.manager_id) return fail(managers.length ? "Pick the manager for this show." : "Add a manager in Team first.");
+    if (!form.employee_ids.length) return fail("Assign at least one singer.");
     setSaving(true);
     setError("");
     const body = {
@@ -1321,17 +1328,19 @@ function ShowEditor({ show, managers, singers, onClose, onSaved }) {
       ...(user.role === "admin" && { revenue: form.revenue === "" ? null : Number(form.revenue) })
     };
     try {
+      // Close the form first, then confirm, so the message isn't hidden behind it.
       if (show) {
         await api(`/shows/${show.id}`, { token, method: "PATCH", body });
-        toast("Show updated");
+        onSaved(body);
+        toast("Show updated", "success");
       } else {
         const data = await api("/shows", { token, method: "POST", body });
-        toast(`${data.show.location} scheduled`);
+        onSaved(body);
+        toast(`Show added: ${data.show.location}, ${longDate(data.show.date)}`, "success");
       }
-      await refresh(true);
-      onSaved(body);
+      refresh(true);
     } catch (err) {
-      setError(err.message);
+      fail(err.message);
       setSaving(false);
     }
   };
