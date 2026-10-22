@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import writeXlsxFile from "write-excel-file/node";
 import { Buffer } from "node:buffer";
 import { connect } from "../lib/db.js";
-import { addDemoData, demoDataStatus, removeDemoData } from "../lib/demo-data.js";
+import { addDemoData, demoDataStatus, removeDemoData, DEMO_DOMAIN } from "../lib/demo-data.js";
 
 // Postgres DATE columns are parsed as local midnight and then serialized with
 // toISOString(); outside UTC (e.g. a dev machine in IST) every show date shifts
@@ -80,6 +80,27 @@ const ensureSchema = () =>
       FROM venues v
       WHERE s.venue_id IS NULL
         AND lower(regexp_replace(trim(s.location), '\\s+', ' ', 'g')) = lower(v.name)
+    `;
+    // Mock data switch (Reports -> Sample data, top-left toggle). Reads go
+    // through the app.* views, which drop demo rows while the switch is off.
+    // Schema "app" is not exposed by Supabase's public Data API.
+    await sql`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`;
+    await sql`ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY`;
+    await sql`CREATE SCHEMA IF NOT EXISTS app`;
+    await sql`
+      CREATE OR REPLACE FUNCTION app.mock_on() RETURNS boolean LANGUAGE sql STABLE AS
+      $$ SELECT EXISTS (SELECT 1 FROM public.app_settings WHERE key = 'mock_data' AND value = 'on') $$
+    `;
+    await sql`CREATE OR REPLACE VIEW app.shows AS SELECT * FROM public.shows WHERE app.mock_on() OR id NOT LIKE 'DEMO-%'`;
+    // Views can't take query parameters, so the (fixed) demo domain is written in.
+    await sql.unsafe(`CREATE OR REPLACE VIEW app.users AS SELECT * FROM public.users WHERE app.mock_on() OR username NOT LIKE '%${DEMO_DOMAIN}'`);
+    await sql`CREATE OR REPLACE VIEW app.attendance AS SELECT * FROM public.attendance WHERE app.mock_on() OR show_id NOT LIKE 'DEMO-%'`;
+    await sql`CREATE OR REPLACE VIEW app.daily_activity AS SELECT * FROM public.daily_activity WHERE user_id IN (SELECT id FROM app.users)`;
+    await sql`
+      CREATE OR REPLACE VIEW app.venues AS SELECT * FROM public.venues v
+      WHERE app.mock_on()
+         OR NOT EXISTS (SELECT 1 FROM public.shows s WHERE s.venue_id = v.id AND s.id LIKE 'DEMO-%')
+         OR EXISTS (SELECT 1 FROM public.shows s WHERE s.venue_id = v.id AND s.id NOT LIKE 'DEMO-%')
     `;
   })().catch((error) => {
     schemaReady = undefined; // try again on the next request
@@ -283,20 +304,20 @@ const canAccessShow = (user, show) => {
 };
 
 const getStats = async (user) => {
-  const allShows = await sql`SELECT * FROM shows`;
+  const allShows = await sql`SELECT * FROM app.shows`;
   const visibleShows = allShows.filter((show) => canAccessShow(user, show));
   const visibleShowIds = visibleShows.map((show) => show.id);
 
   let visibleAttendance;
   if (user.role === "employee") {
-    visibleAttendance = await sql`SELECT * FROM attendance WHERE user_id = ${user.id}`;
+    visibleAttendance = await sql`SELECT * FROM app.attendance WHERE user_id = ${user.id}`;
   } else if (visibleShowIds.length > 0) {
-    visibleAttendance = await sql`SELECT * FROM attendance WHERE show_id = ANY(${visibleShowIds})`;
+    visibleAttendance = await sql`SELECT * FROM app.attendance WHERE show_id = ANY(${visibleShowIds})`;
   } else {
     visibleAttendance = [];
   }
 
-  const approvalsDone = user.role === "employee" ? 0 : (await sql`SELECT COUNT(*) FROM attendance WHERE reviewed_by = ${user.id}`)[0].count;
+  const approvalsDone = user.role === "employee" ? 0 : (await sql`SELECT COUNT(*) FROM app.attendance WHERE reviewed_by = ${user.id}`)[0].count;
 
   return {
     totalShows: visibleShows.length,
@@ -308,9 +329,9 @@ const getStats = async (user) => {
 };
 
 const attendanceLedgerRows = async () => {
-  const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
+  const allShows = await sql`SELECT * FROM app.shows ORDER BY date ASC`;
   const allUsers = await sql`SELECT * FROM users`;
-  const allAttendance = await sql`SELECT * FROM attendance`;
+  const allAttendance = await sql`SELECT * FROM app.attendance`;
 
   return allShows.flatMap((show) => {
     const manager = allUsers.find((u) => u.id === show.manager_id);
@@ -386,7 +407,7 @@ app.get("/api/website/data", ...websiteGuard, async (_req, res) => {
                SELECT json_agg(u.name ORDER BY u.name)
                FROM users u WHERE u.id = ANY(s.employee_ids)
              ), '[]'::json) AS performers
-      FROM shows s
+      FROM app.shows s
       WHERE s.date >= CURRENT_DATE - INTERVAL '1 day'
       ORDER BY s.date ASC, s.time ASC
     `;
@@ -832,7 +853,7 @@ app.get("/api/auth/me", authenticate, async (req, res) => {
 });
 
 app.get("/api/users", authenticate, requireRole("admin", "superior"), async (_req, res) => {
-  const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
+  const allUsers = await sql`SELECT * FROM app.users ORDER BY id ASC`;
   res.json({ users: allUsers.map(publicUser) });
 });
 
@@ -863,7 +884,7 @@ app.post("/api/users", authenticate, requireRole("admin", "superior"), async (re
       RETURNING *
     `;
 
-    const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
+    const allUsers = await sql`SELECT * FROM app.users ORDER BY id ASC`;
     return res.status(201).json({ user: publicUser(newUser), users: allUsers.map(publicUser) });
   } catch (error) {
     console.error("User creation error:", error);
@@ -893,7 +914,7 @@ app.delete("/api/users/:id", authenticate, requireRole("admin"), async (req, res
     
     await sql`DELETE FROM users WHERE id = ${id}`;
     
-    const allUsers = await sql`SELECT * FROM users ORDER BY id ASC`;
+    const allUsers = await sql`SELECT * FROM app.users ORDER BY id ASC`;
     res.json({ users: allUsers.map(publicUser) });
   } catch (error) {
     console.error("User deletion error:", error);
@@ -903,7 +924,7 @@ app.delete("/api/users/:id", authenticate, requireRole("admin"), async (req, res
 
 app.get("/api/shows", authenticate, async (req, res) => {
   try {
-    const allShowsRaw = await sql`SELECT * FROM shows ORDER BY date ASC`;
+    const allShowsRaw = await sql`SELECT * FROM app.shows ORDER BY date ASC`;
     const visibleShowsRaw = allShowsRaw.filter((show) => canAccessShow(req.user, show));
 
     if (visibleShowsRaw.length === 0) {
@@ -956,8 +977,8 @@ app.get("/api/venues", authenticate, requireRole("admin", "superior"), async (_r
   try {
     const venues = await sql`
       SELECT v.id, v.name, COUNT(s.id)::int AS shows, MAX(s.date) AS last_show
-      FROM venues v LEFT JOIN shows s ON s.venue_id = v.id
-      GROUP BY v.id ORDER BY lower(v.name)
+      FROM app.venues v LEFT JOIN app.shows s ON s.venue_id = v.id
+      GROUP BY v.id, v.name ORDER BY lower(v.name)
     `;
     return res.json({
       venues: venues.map((v) => ({
@@ -1025,6 +1046,37 @@ app.get("/api/demo-data", authenticate, requireRole("admin", "superior"), async 
   }
 });
 
+// The mock data switch. Off hides every demo row in the app (see the app.*
+// views) and unpublishes the demo gigs on the public website; nothing is deleted.
+const mockOn = async () => (await sql`SELECT app.mock_on() AS on`)[0].on;
+const setMock = async (on) => {
+  await sql`
+    INSERT INTO app_settings (key, value) VALUES ('mock_data', ${on ? "on" : "off"})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+  `;
+  if (websiteSql) await websiteSql`UPDATE shows SET is_published = ${on} WHERE source_show_id LIKE 'DEMO-%'`;
+};
+
+app.get("/api/settings/mock-data", authenticate, requireRole("admin", "superior"), async (_req, res) => {
+  try {
+    return res.json({ on: await mockOn(), ...(await demoDataStatus(sql)) });
+  } catch (error) {
+    console.error("mock-data status error:", error);
+    return res.status(500).json({ message: "Could not check mock data" });
+  }
+});
+
+app.put("/api/settings/mock-data", authenticate, requireRole("admin", "superior"), async (req, res) => {
+  try {
+    if (typeof req.body?.on !== "boolean") return res.status(400).json({ message: "on must be true or false" });
+    await setMock(req.body.on);
+    return res.json({ on: req.body.on, ...(await demoDataStatus(sql)) });
+  } catch (error) {
+    console.error("mock-data switch error:", error);
+    return res.status(500).json({ message: "Could not switch mock data" });
+  }
+});
+
 app.post("/api/demo-data", authenticate, requireRole("admin", "superior"), async (req, res) => {
   try {
     if (req.body?.action === "remove") {
@@ -1033,6 +1085,7 @@ app.post("/api/demo-data", authenticate, requireRole("admin", "superior"), async
     }
     if (req.body?.action === "add") {
       const added = await addDemoData(sql, websiteSql);
+      await setMock(true); // just loaded it, so show it
       return res.json({ ...(await demoDataStatus(sql)), added, message: `Added ${added.shows} sample shows` });
     }
     return res.status(400).json({ message: "Action must be add or remove" });
@@ -1077,7 +1130,7 @@ app.post("/api/shows", authenticate, requireRole("admin", "superior"), async (re
       RETURNING *
     `;
 
-    const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
+    const allShows = await sql`SELECT * FROM app.shows ORDER BY date ASC`;
     const visibleShows = await decorateShows(allShows.filter((show) => canAccessShow(req.user, show)));
 
     return res.status(201).json({ show: await decorateShow(newShow), shows: visibleShows });
@@ -1181,7 +1234,7 @@ app.delete("/api/shows/:id", authenticate, requireRole("admin"), async (req, res
     // Delete the show
     await sql`DELETE FROM shows WHERE id = ${id}`;
     
-    const allShows = await sql`SELECT * FROM shows ORDER BY date ASC`;
+    const allShows = await sql`SELECT * FROM app.shows ORDER BY date ASC`;
     const visibleShows = await decorateShows(allShows.filter((show) => canAccessShow(req.user, show)));
     res.json({ shows: visibleShows });
   } catch (error) {
@@ -1261,12 +1314,12 @@ app.patch("/api/attendance/:id/review", authenticate, requireRole("manager", "ad
 app.get("/api/profile", authenticate, async (req, res) => {
   try {
     const attendanceQuery = req.user.role === "employee" 
-      ? sql`SELECT a.*, s.id as show_id FROM attendance a JOIN shows s ON a.show_id = s.id WHERE a.user_id = ${req.user.id}`
-      : sql`SELECT a.*, s.id as show_id FROM attendance a JOIN shows s ON a.show_id = s.id`;
+      ? sql`SELECT a.*, s.id as show_id FROM app.attendance a JOIN app.shows s ON a.show_id = s.id WHERE a.user_id = ${req.user.id}`
+      : sql`SELECT a.*, s.id as show_id FROM app.attendance a JOIN app.shows s ON a.show_id = s.id`;
     
     const [allAttendance, allShowsRaw, stats] = await Promise.all([
       attendanceQuery,
-      sql`SELECT * FROM shows`,
+      sql`SELECT * FROM app.shows`,
       getStats(req.user)
     ]);
 
@@ -1302,9 +1355,9 @@ app.get("/api/profile", authenticate, async (req, res) => {
 
 app.get("/api/export/attendance.xlsx", authenticate, requireRole("admin", "superior"), async (_req, res) => {
   const rows = await attendanceLedgerRows();
-  const allUsers = await sql`SELECT * FROM users`;
-  const allShows = await sql`SELECT * FROM shows`;
-  const allAttendance = await sql`SELECT * FROM attendance`;
+  const allUsers = await sql`SELECT * FROM app.users`;
+  const allShows = await sql`SELECT * FROM app.shows`;
+  const allAttendance = await sql`SELECT * FROM app.attendance`;
 
   const summaryByEmployee = allUsers
     .filter((user) => user.role === "employee")
@@ -1411,7 +1464,7 @@ app.get("/api/activity/today", authenticate, async (req, res) => {
   if (req.user.role !== "employee") {
     const dailyActivities = await sql`
       SELECT da.*, u.name, u.username, u.role
-      FROM daily_activity da
+      FROM app.daily_activity da
       JOIN users u ON da.user_id = u.id
       WHERE da.date = ${todayStr}
     `;

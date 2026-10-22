@@ -429,6 +429,47 @@ select.input {
   transform: translateX(1rem);
 }
 
+.switch-sm {
+  width: 2rem;
+  height: 1.25rem;
+}
+
+.switch-sm::after {
+  top: 2px;
+  left: 2px;
+  width: 1rem;
+  height: 1rem;
+}
+
+.switch-sm:checked::after {
+  transform: translateX(0.75rem);
+}
+
+.switch:disabled {
+  opacity: 0.6;
+}
+
+/* Mock data switch, top left of every page for admins. */
+.mock-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 0.25rem 0.35rem 0.25rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sidebar .mock-toggle {
+  margin: 0.75rem 0.5rem 0.25rem;
+  align-self: flex-start;
+}
+
 /* Selectable person row (assigning singers to a show). */
 .pick-row {
   display: flex;

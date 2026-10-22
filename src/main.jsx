@@ -431,6 +431,7 @@ function Shell({ user, view, navigate, onLogout, badges, children }) {
           <span className="brand-mark"><Logo /></span>
           <span className="brand-name">SUNGGEET</span>
         </div>
+        <MockToggle />
         <nav className="nav" aria-label="Main">
           {items.map((item) => (
             <button
@@ -460,6 +461,7 @@ function Shell({ user, view, navigate, onLogout, badges, children }) {
       <main className="main">
         <header className={`topbar ${scrolled ? "topbar-scrolled" : ""}`}>
           <span className="brand-mark"><Logo /></span>
+          <MockToggle />
           <span
             className="min-w-0 flex-1 truncate text-[15px] font-semibold transition-opacity duration-150"
             style={{ opacity: scrolled ? 1 : 0 }}
@@ -2070,6 +2072,45 @@ function ReportsPage() {
         <ReportEntitySheet model={model} dimId={open.dim} entityKey={open.key} period={period} onClose={() => setOpen(null)} />
       )}
     </>
+  );
+}
+
+/* Admin/superior switch for the mock (demo) data. On shows it everywhere in the
+   app and on the public site; off hides it (nothing is deleted). Turning it on
+   with no mock data loaded loads it first. */
+function MockToggle() {
+  const { token, user, refresh } = useData();
+  const { toast } = useUI();
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (isAdmin(user)) api("/settings/mock-data", { token, timeout: 20000 }).then(setState).catch(() => {});
+  }, [token, user]);
+
+  if (!isAdmin(user) || !state) return null;
+
+  const flip = async (on) => {
+    setBusy(true);
+    try {
+      const next = on && !state.present
+        ? await api("/demo-data", { token, method: "POST", body: { action: "add" }, timeout: 60000 })
+        : await api("/settings/mock-data", { token, method: "PUT", body: { on }, timeout: 20000 });
+      setState({ ...next, on });
+      await refresh(true);
+      toast(on ? "Mock data on" : "Mock data off");
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <label className="mock-toggle" title="Show or hide the mock data everywhere, including the public website">
+      <span>{busy ? "Switching…" : "Mock data"}</span>
+      <input type="checkbox" className="switch switch-sm" checked={state.on} disabled={busy} onChange={(e) => flip(e.target.checked)} />
+    </label>
   );
 }
 
