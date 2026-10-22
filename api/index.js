@@ -49,9 +49,18 @@ const PORT = process.env.PORT || 4000;
 // from the local one). Bring its schema up to date once per server start so a
 // deploy never depends on someone running a migration by hand. Every statement
 // only adds and is safe to repeat; same steps as scripts/add-venues.js.
+// Bump SCHEMA_VERSION whenever a step is added below. A server that starts on
+// an up-to-date database then skips every step: ALTER TABLE locks the table,
+// and each new serverless copy used to run them all.
+const SCHEMA_VERSION = "4";
 let schemaReady;
 const ensureSchema = () =>
   (schemaReady ??= (async () => {
+    const [current] = await sql`
+      SELECT value FROM app_settings WHERE key = 'schema_version' AND to_regclass('app.users') IS NOT NULL
+    `.catch(() => []); // app_settings doesn't exist yet on a brand-new database
+    if (current?.value === SCHEMA_VERSION) return;
+
     await sql`ALTER TABLE shows ADD COLUMN IF NOT EXISTS employee_pay JSONB DEFAULT '{}'::jsonb`;
     await sql`ALTER TABLE shows ADD COLUMN IF NOT EXISTS manager_pay NUMERIC`;
     // What the venue or client pays us for the show (admin only, feeds profit).
@@ -104,17 +113,46 @@ const ensureSchema = () =>
          OR NOT EXISTS (SELECT 1 FROM public.shows s WHERE s.venue_id = v.id AND s.id LIKE 'DEMO-%')
          OR EXISTS (SELECT 1 FROM public.shows s WHERE s.venue_id = v.id AND s.id NOT LIKE 'DEMO-%')
     `;
+    // Requests slower than 3s are written here (see the timing middleware) so
+    // live slowness can be diagnosed without access to the Vercel logs.
+    await sql`
+      CREATE TABLE IF NOT EXISTS slow_requests (
+        at TIMESTAMPTZ NOT NULL DEFAULT now(), method TEXT, path TEXT, status INT,
+        total_ms INT, schema_ms INT, db_ms INT, db_queries INT, cold BOOLEAN
+      )
+    `;
+    await sql`ALTER TABLE slow_requests ENABLE ROW LEVEL SECURITY`;
+    await sql`
+      INSERT INTO app_settings (key, value) VALUES ('schema_version', ${SCHEMA_VERSION})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    `;
   })().catch((error) => {
     schemaReady = undefined; // try again on the next request
     throw error;
   }));
 
-app.use(async (_req, _res, next) => {
+// Times every request; anything over 3s is saved to slow_requests.
+let coldStart = true;
+app.use(async (req, res, next) => {
+  const started = Date.now();
+  const cold = coldStart;
+  coldStart = false;
+  const before = sql.stats();
   try {
     await ensureSchema();
   } catch (error) {
     console.error("Schema check failed:", error);
   }
+  const schemaMs = Date.now() - started;
+  res.on("finish", () => {
+    const total = Date.now() - started;
+    if (total < 3000) return;
+    const after = sql.stats();
+    sql`
+      INSERT INTO slow_requests (method, path, status, total_ms, schema_ms, db_ms, db_queries, cold)
+      VALUES (${req.method}, ${req.path}, ${res.statusCode}, ${total}, ${schemaMs}, ${after.ms - before.ms}, ${after.queries - before.queries}, ${cold})
+    `.catch(() => {});
+  });
   next();
 });
 

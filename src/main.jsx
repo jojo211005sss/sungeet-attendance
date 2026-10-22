@@ -3996,10 +3996,10 @@ function clearCache() {
 
 async function api(path, options = {}) {
   const controller = new AbortController();
-  // 8s suits the warm endpoints. Anything touching the website database needs
-  // longer, because that Neon project auto-suspends and a cold start alone can
-  // take several seconds.
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 8000);
+  // 20s by default: a request that lands on a freshly started server copy can
+  // take several seconds before it answers, and giving up early only produced
+  // "timed out" errors for actions that had in fact gone through.
+  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 20000);
 
   try {
     const response = await fetch(`${API_URL}${path}`, {
