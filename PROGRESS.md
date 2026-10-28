@@ -37,6 +37,7 @@ Attendance and show management for SUNGGEET's live music team: singers mark show
 - 2026-10-08 (later): full UI/UX redesign, mobile-first, styled after workforce apps (Homebase/Connecteam/Linear). Light warm theme, Geist font, CSS tokens in `src/styles.css`. Phones: bottom tab bar (admin: Home/Shows/Team/Website/More), bottom sheets; desktop: sidebar + right-hand drawers. New: Home approvals inbox (approve/reject inline), Team page (search, roles, today's availability), Reports with pay in ₹, singer "Ready to mark" + earnings, toasts and in-app confirm dialogs instead of alert()/confirm(). Old Admin tab split into Team (members) and Shows (New show / edit in the show drawer); Excel export moved to Reports.
 
 ## In progress / next steps
+- 2026-10-28: Keep-alive: Vercel cron (vercel.json) calls /api/health every day at 03:30 UTC (9 AM IST); it runs a database query, so Supabase's free plan never sees 7 quiet days and pauses the project.
 - BEFORE SENDING LOGINS: turn Mock data OFF (top-left toggle) after the demo; add the real Chai Leela Thursday/Saturday shows; delete test member "jj2121" in Team; only send the 17 singer + admin blocks, keep sample accounts.
 - Optional cleanup: delete Neon project sunggeet-prod and the unused Supabase project "supabase" (Mumbai). Website DB (neondb on Neon) still has Neon's ~100 hours/month free limit; move it to Supabase if it ever hits that.
 - Hard-disk side project: user wants to talk about it later.
